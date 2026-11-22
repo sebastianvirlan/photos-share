@@ -89,6 +89,9 @@ final class ImportModel {
     /// The last import's result, shown above the bottom bar until dismissed or the next import.
     private(set) var summary: ImportSummary?
     private(set) var importError: String?
+    /// What the last import was asked for, and which of it didn't arrive (to retry).
+    private var lastRequested: Set<String> = []
+    private(set) var notImported: Set<String> = []
     /// Importing runs under the grid, so you can keep browsing and selecting.
     private(set) var isImporting = false
     private var process: Process?
@@ -189,6 +192,9 @@ final class ImportModel {
     func start() {
         guard source != nil, dest != nil, !selection.isEmpty, !isImporting else { return }
         let uuids = selection
+        selection.subtract(uuids)   // they're on their way; select more meanwhile
+        lastRequested = uuids
+        notImported = []
         cancelled = false
         isImporting = true
         importError = nil
@@ -206,6 +212,7 @@ final class ImportModel {
     func dismissResult() {
         summary = nil
         importError = nil
+        notImported = []
     }
 
     private func writeSelection(_ uuids: Set<String>) throws -> URL {
@@ -219,11 +226,20 @@ final class ImportModel {
         importError = error
         isImporting = false
         process = nil
+        // Without a result we can't tell what arrived: offer only what's still not in the destination.
+        let inDest = Set((plan?.items ?? []).filter(\.in_dest).map(\.uuid))
+        notImported = lastRequested.subtracting(inDest)
+    }
+
+    func selectNotImported() {
+        selection.formUnion(notImported)
+        notImported = []
     }
 
     /// What was imported is now in the destination: mark it so, and take it out of the selection.
     private func apply(_ result: ImportSummary) {
         let imported = Set(result.imported_uuids ?? [])
+        notImported = lastRequested.subtracting(imported)
         guard var p = plan, !imported.isEmpty else { return }
         for i in p.items.indices where imported.contains(p.items[i].uuid) { p.items[i].in_dest = true }
         plan = p
@@ -352,8 +368,8 @@ final class ImportModel {
     }
 
     /// For `--snapshot` renders only.
-    func showResultForSnapshot(_ result: ImportSummary) {
-        isImporting = false; summary = result; apply(result)
+    func showResultForSnapshot(_ result: ImportSummary, requested: Set<String>) {
+        isImporting = false; summary = result; lastRequested = requested; apply(result)
     }
 
     /// For `--snapshot` renders only.

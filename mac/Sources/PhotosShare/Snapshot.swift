@@ -48,7 +48,7 @@ enum Snapshot {
         after.showResultForSnapshot(ImportSummary(
             imported: 10, requested: 12,
             failed: [.init(uuid: "x", name: "IMG_0042.HEIC", reason: "Photos refused it: unsupported file")],
-            skipped_edited: [], imported_uuids: Array(newOnes.prefix(10))))
+            skipped_edited: [], imported_uuids: Array(newOnes.prefix(10))), requested: Set(newOnes.prefix(12)))
         render(ImportView(model: after).frame(width: 960, height: 640), to: dir, name: "import-result")
         render(PhotoPreview(model: keeping, uuid: system.items[0].uuid).frame(width: 1000, height: 700),
                to: dir, name: "import-preview")

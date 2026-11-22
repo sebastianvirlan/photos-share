@@ -273,6 +273,10 @@ struct ImportView: View {
                         .foregroundStyle(problems > 0 ? .orange : .green)
                 }
                 Spacer()
+                if !model.notImported.isEmpty {
+                    Button("Select \(model.notImported.count) Not Imported") { model.selectNotImported() }
+                        .help("Select the photos from this import that didn’t arrive, to look at them or try again.")
+                }
                 if problems > 0 {
                     Button("Details") { showingDetails = true }
                         .popover(isPresented: $showingDetails, arrowEdge: .top) { resultDetails.frame(width: 520) }
