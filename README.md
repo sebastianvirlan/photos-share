@@ -61,6 +61,24 @@ tool checks whether the library changed. Once the changes have settled, it re-in
 background, and the viewer's page shows a **New photos · Show** button. Edited photos get
 fresh previews.
 
+## Cleaning up after importing one library into another
+
+Photos' **File → Import** from another library copies photos but can't delete them from the
+source. `photos-dedupe`, or **Clean Up After Import…** in the menu bar app, finds what's safe
+to delete:
+
+```sh
+uv run photos-dedupe "Source.photoslibrary" "Destination.photoslibrary"          # report only
+uv run photos-dedupe "Source.photoslibrary" "Destination.photoslibrary" --mark   # + album
+```
+
+- **Matching:** photos are matched by content fingerprint, or by filename, size and date
+  when that fails. Photos edited in the source whose edit didn't come across are left out.
+- **`--mark`:** opens the source in Photos and puts the verified photos into an album
+  "In <destination> – safe to delete". Review it, then press ⌘A, ⌘⌫ and confirm.
+- **Deleting:** the tool never deletes photos itself, and Photos' scripting doesn't allow it.
+  Deleted photos stay in Recently Deleted for 30 days.
+
 ## Tests
 
 ```sh

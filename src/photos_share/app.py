@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import threading
 import webbrowser
 from pathlib import Path
 
@@ -58,6 +59,7 @@ class PhotosShareApp(rumps.App):
             None, access, options,
             rumps.MenuItem("Set Password…", callback=self.ask_password),
             None, self.start_stop, self.copy_item, self.open_item,
+            None, rumps.MenuItem("Clean Up After Import…", callback=self.cleanup),
             None, rumps.MenuItem("Quit Photos Share", callback=self.quit),
         ]
         self.refresh()
@@ -188,9 +190,92 @@ class PhotosShareApp(rumps.App):
         if self.share:
             webbrowser.open(self.share.url)
 
+    # ---- clean up after File → Import from another library -------------------
+
+    def cleanup(self, _):
+        if getattr(self, "_cleanup_job", None):
+            rumps.alert("Still comparing", "The previous comparison hasn't finished yet.")
+            return
+        src = _choose_library("Choose the library you imported FROM (the one to clean up).")
+        if not src:
+            return
+        dst = _choose_library(f"Now choose the library you imported “{src.stem}” INTO.")
+        if not dst:
+            return
+        if src == dst:
+            rumps.alert("Same library", "Choose two different libraries.")
+            return
+        from . import dedupe
+
+        job = {"src": src, "dst": dst, "result": None, "error": None}
+
+        def work():
+            try:
+                job["result"] = dedupe.match(dedupe.load(src), dedupe.load(dst))
+            except Exception as e:  # noqa: BLE001 - shown to the user
+                job["error"] = str(e)
+
+        self._cleanup_job = job
+        self.status.title = f"Comparing “{src.stem}” with “{dst.stem}”…"
+        threading.Thread(target=work, daemon=True, name="dedupe").start()
+        self._cleanup_timer = rumps.Timer(self._cleanup_done, 0.5)
+        self._cleanup_timer.start()
+
+    def _cleanup_done(self, timer):
+        job = self._cleanup_job
+        if job["result"] is None and job["error"] is None:
+            return  # still working
+        timer.stop()
+        self._cleanup_job = None
+        self.refresh()
+        from . import dedupe
+
+        if job["error"]:
+            rumps.alert("Couldn’t compare the libraries", job["error"])
+            return
+        r, src, dst = job["result"], job["src"], job["dst"]
+        text = dedupe.report(r, src, dst).replace("Run again with --mark to collect",
+                                                  "“Mark in Photos” collects")
+        NSApp.activateIgnoringOtherApps_(True)
+        if not r.matched:
+            rumps.alert("Clean Up After Import", text)
+            return
+        if rumps.alert("Clean Up After Import", text + "\n\nPhotos will quit and reopen with "
+                       f"“{src.stem}”.", ok="Mark in Photos", cancel="Close") != 1:
+            return
+        self.status.title = f"Marking photos in “{src.stem}”…"
+        try:
+            added = dedupe.mark(src, r.matched, f"In {dst.stem} – safe to delete")
+        except Exception as e:  # noqa: BLE001
+            rumps.alert("Couldn’t mark the photos", str(e))
+            return
+        finally:
+            self.refresh()
+        rumps.alert("Ready to delete",
+                    f"{added:,} photos are in the album now shown in Photos.\n\nReview it, then "
+                    "press ⌘A (select all), ⌘⌫ (delete) and confirm. They stay in Recently "
+                    "Deleted for 30 days.")
+
     def quit(self, _):
         self.stop_sharing()
         rumps.quit_application()
+
+
+def _choose_library(message: str) -> Path | None:
+    panel = NSOpenPanel.openPanel()
+    panel.setCanChooseFiles_(True)            # a .photoslibrary is a package, i.e. a "file"
+    panel.setCanChooseDirectories_(False)
+    panel.setAllowsMultipleSelection_(False)
+    panel.setMessage_(message)
+    panel.setPrompt_("Choose")
+    NSApp.activateIgnoringOtherApps_(True)
+    if panel.runModal() != 1:
+        return None
+    path = Path(panel.URLs()[0].path()).resolve()
+    if path.suffix != ".photoslibrary":
+        rumps.alert("Not a Photos library", f"“{path.name}” isn’t a .photoslibrary.")
+        return None
+    return path
 
 
 # ---- persistence -------------------------------------------------------------
