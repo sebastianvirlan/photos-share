@@ -1,7 +1,9 @@
 import argparse
 import getpass
+import json
 import logging
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -33,6 +35,8 @@ def main() -> None:
                           "viewers; requires a password)")
     net.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--machine", action="store_true",
+                        help="report status as JSON lines on stdout (used by the Mac app)")
     parser.add_argument("--refresh", type=float, default=60, metavar="SECONDS",
                         help="how often to check for photos added in Photos (default 60; 0 = off)")
     parser.add_argument("--no-keep-awake", dest="keep_awake", action="store_false",
@@ -44,15 +48,28 @@ def main() -> None:
 
     from .share import Share, ShareConfig, ShareError
 
+    def emit(event: str, **data) -> None:
+        if args.machine:
+            print(json.dumps({"event": event, **data}), flush=True)
+
+    def fail(msg: str):
+        if args.machine:
+            emit("error", message=msg)
+            sys.exit(1)
+        sys.exit(f"Error: {msg}")
+
+    def say(*a) -> None:  # human-readable output; goes to stderr in machine mode
+        print(*a, file=sys.stderr if args.machine else sys.stdout, flush=True)
+
     password = None
     if args.password or args.funnel:
         password = os.environ.get(PASSWORD_ENV)
         if not password:
-            if not sys.stdin.isatty():
-                sys.exit(f"Error: a password is required; set ${PASSWORD_ENV}.")
+            if args.machine or not sys.stdin.isatty():
+                fail(f"a password is required; set ${PASSWORD_ENV}.")
             password = getpass.getpass("Choose a password for viewers: ")
             if password != getpass.getpass("Repeat it: "):
-                sys.exit("Error: passwords don't match.")
+                fail("passwords don't match.")
 
     mode = "tailscale" if args.tailscale else "funnel" if args.funnel else "local"
     cfg = ShareConfig(path=args.path, only=args.only or [], screenshots=args.screenshots,
@@ -62,33 +79,59 @@ def main() -> None:
     try:
         share = Share(cfg)
     except ShareError as e:
-        sys.exit(f"Error: {e}")
+        fail(str(e))
 
     libs = list(share.collection.libraries.values())
     ready = sum(lib.state == "ready" for lib in libs)
-    print(f"{len(libs)} librar{'y' if len(libs) == 1 else 'ies'} "
+    say(f"{len(libs)} librar{'y' if len(libs) == 1 else 'ies'} "
           f"({ready} already indexed; others index on first open)")
-    print(f"Screenshots: {'shown' if args.screenshots else 'hidden'} · "
+    say(f"Screenshots: {'shown' if args.screenshots else 'hidden'} · "
           f"Video: {args.video} · Downloads: {'on' if args.downloads else 'off'} · "
           f"Password: {'on' if password else 'off'} · "
           f"Keep awake: {'on' if args.keep_awake else 'off'} · Hidden & deleted photos: excluded")
     if mode == "funnel":
-        print("\n⚠ PUBLIC link: anyone who has it reaches the password page.")
+        say("\n⚠ PUBLIC link: anyone who has it reaches the password page.")
     elif mode == "local" and args.host not in ("127.0.0.1", "localhost"):
-        print("Warning: listening beyond this Mac" + ("" if password else " with no password") + ".")
+        say("Warning: listening beyond this Mac" + ("" if password else " with no password") + ".")
 
     try:
         share.start_funnel()
     except ShareError as e:
-        sys.exit(f"Error: {e}")
+        fail(str(e))
     share.start_keep_awake()
     share.start_watching()
-    print(f"\nSharing at: {share.url}\nPress Ctrl+C to stop sharing.", flush=True)
+    say(f"\nSharing at: {share.url}\nPress Ctrl+C to stop sharing.")
+    server = share.server()
+    if args.machine:
+        # Announce "ready" only once the port is actually open.
+        orig_startup = server.startup
+
+        async def startup(*a, **kw):
+            await orig_startup(*a, **kw)
+            if server.started:
+                emit("ready", url=share.url, libraries=len(libs))
+        server.startup = startup
+    # uvicorn shuts down gracefully on SIGINT/SIGTERM, then re-raises the signal. Make
+    # SIGTERM behave like Ctrl+C so our cleanup below still runs (closing a Funnel link).
+    def _term(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _term)
     try:
-        share.server().run()  # blocks; handles Ctrl+C
+        try:
+            server.run()  # blocks; handles Ctrl+C / SIGTERM
+        except SystemExit:
+            pass  # uvicorn exits this way when it can't start
+        except KeyboardInterrupt:
+            pass  # stopped by Ctrl+C or SIGTERM; cleanup below
+        if not server.started:
+            share.stop_watching()
+            share.stop_keep_awake()
+            share.stop_funnel()
+            fail(f"couldn't start the web server on port {args.port}. Is another copy running?")
     finally:
         share.stop_watching()
         share.stop_keep_awake()
         if mode == "funnel":
             share.stop_funnel()
-            print("Public link closed.")
+            say("Public link closed.")
+        emit("stopped")

@@ -12,7 +12,9 @@ It never edits a library's database itself.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -280,6 +282,49 @@ def _confirm(question: str) -> bool:
     return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
 
 
+def thumbnail_map(library: Path) -> dict[str, str]:
+    """uuid → path of a preview JPEG Photos already made (for the app's grids).
+
+    Lists each derivatives folder once (not once per photo), preferring the small
+    "masters" previews (~360 px), which are plenty for a grid and quick to load.
+    """
+    out: dict[str, str] = {}
+    base = library / "resources" / "derivatives"
+    for folder, preferred in ((base, False), (base / "masters", True)):
+        for sub in "0123456789ABCDEF":
+            d = folder / sub
+            try:
+                names = os.listdir(d)
+            except FileNotFoundError:
+                continue
+            for name in names:
+                if not name.lower().endswith((".jpg", ".jpeg")):
+                    continue
+                uuid = name.split("_", 1)[0]
+                if preferred or uuid not in out:
+                    out[uuid] = str(d / name)
+    return out
+
+
+def to_json(r: Result, src: Path, dst: Path) -> dict:
+    src_thumbs, dst_thumbs = thumbnail_map(src), thumbnail_map(dst)
+    system = system_library()
+
+    def row(i: Item) -> dict:
+        pair = r.pairs.get(i.uuid)
+        return {"uuid": i.uuid, "name": i.filename, "date": i.date, "edited": i.edited,
+                "thumb": src_thumbs.get(i.uuid),
+                "dest": pair[0] if pair else None, "how": pair[1] if pair else None,
+                "dest_thumb": dst_thumbs.get(pair[0]) if pair else None}
+
+    return {"source": str(src), "dest": str(dst), "source_name": src.stem,
+            "dest_name": dst.stem, "total": r.total, "all_verified": all_verified(r),
+            "source_is_system": system == src, "dest_is_system": system == dst,
+            "matched": [row(i) for i in r.matched],
+            "edit_lost": [row(i) for i in r.edit_lost],
+            "missing": [row(i) for i in r.missing]}
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
         prog="photos-dedupe",
@@ -298,44 +343,71 @@ def main(argv: list[str] | None = None) -> None:
                           "is verified in DEST)")
     ap.add_argument("--album", default=None, help="album name (default: 'In <dest> – safe to delete')")
     ap.add_argument("--yes", action="store_true", help="don't ask for confirmation in the terminal")
+    ap.add_argument("--json", action="store_true",
+                    help="machine-readable output on stdout (for the Mac app); actions need --yes")
     args = ap.parse_args(argv)
     logging.getLogger("osxphotos").setLevel(logging.ERROR)
+    acting = args.mark or args.delete or args.trash_library
+
+    def fail(msg: str):
+        if args.json:
+            print(json.dumps({"error": msg}), flush=True)
+            sys.exit(1)
+        sys.exit(f"Error: {msg}")
+
+    say = (lambda *a: print(*a, file=sys.stderr, flush=True)) if args.json else \
+        (lambda *a: print(*a, flush=True))
 
     src, dst = args.source.expanduser().resolve(), args.dest.expanduser().resolve()
     for p in (src, dst):
         if p.suffix != ".photoslibrary" or not (p / "database" / "Photos.sqlite").exists():
-            sys.exit(f"Error: not a Photos library: {p}")
+            fail(f"not a Photos library: {p}")
     if src == dst:
-        sys.exit("Error: source and destination are the same library.")
+        fail("source and destination are the same library.")
+    if args.json and acting and not args.yes:
+        fail("--json with an action needs --yes (confirm in the app first).")
 
-    print("Reading both libraries… (a minute for big ones on an HDD)", flush=True)
-    r = match(load(src), load(dst))
-    print(report(r, src, dst))
+    say("Reading both libraries… (a minute for big ones on an HDD)")
+    try:
+        r = match(load(src), load(dst))
+    except Exception as e:  # noqa: BLE001
+        fail(f"couldn’t read the libraries: {e}")
+    if not args.json:
+        say(report(r, src, dst))
 
     ask = (lambda q: True) if args.yes else _confirm
+    outcome = None
     try:
         if args.trash_library:
             if not ask(f"\nMove the whole library “{src.stem}” to the Trash?"):
                 sys.exit("Cancelled.")
-            print(f"Moved to the Trash: {trash_library(src, r)}")
+            outcome = f"“{src.stem}” was moved to the Trash ({trash_library(src, r)})."
         elif args.delete:
             if not r.matched:
-                sys.exit("Nothing verified, so nothing to delete.")
+                raise CleanupError("Nothing verified, so nothing to delete.")
             if not ask(f"\nDelete {len(r.matched):,} verified photos from “{src.stem}”? "
                        "(macOS will ask too; they go to Recently Deleted for 30 days)"):
                 sys.exit("Cancelled.")
             n = delete_with_photokit(src, r.matched, wait=_wait_with_runloop)
-            print(f"Deleted {n:,} photos from “{src.stem}”. They’re in Recently Deleted for "
-                  "30 days.")
+            outcome = (f"Deleted {n:,} photos from “{src.stem}”. They’re in Recently Deleted "
+                       "for 30 days.")
         elif args.mark:
             if not r.matched:
-                sys.exit("Nothing verified, so nothing to mark.")
+                raise CleanupError("Nothing verified, so nothing to mark.")
             if not ask(f"\nPhotos will quit and reopen with “{src.stem}”, then an album with "
                        f"{len(r.matched):,} photos is created there. Continue?"):
                 sys.exit("Cancelled.")
-            added = mark(src, r.matched, args.album or f"In {dst.stem} – safe to delete")
-            print(f"\nAdded {added:,} photos to the album shown in Photos.\n"
-                  "Review it, then: ⌘A (select all) → ⌘⌫ (delete from library) → confirm.\n"
-                  "They stay in Recently Deleted for 30 days if you change your mind.")
+            album = args.album or f"In {dst.stem} – safe to delete"
+            added = mark(src, r.matched, album)
+            outcome = (f"Added {added:,} photos to the album “{album}”, now shown in Photos. "
+                       "Review it, then ⌘A (select all), ⌘⌫ (delete) and confirm. They stay "
+                       "in Recently Deleted for 30 days.")
     except (CleanupError, RuntimeError) as e:
-        sys.exit(f"Error: {e}")
+        fail(str(e))
+
+    if args.json:
+        out = to_json(r, src, dst)
+        out["outcome"] = outcome
+        print(json.dumps(out), flush=True)
+    elif outcome:
+        say(outcome)
