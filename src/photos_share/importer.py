@@ -189,46 +189,54 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
 
     staging = Path(tempfile.mkdtemp(prefix="photos-import-"))
     done, failed, imported_count, albums_cache = 0, [], 0, {}
+    imported_uuids: list[str] = []
+    cancelled = False
     try:
-        for group in batches(todo):
-            folder = staging / f"batch-{done}"
-            folder.mkdir()
-            by_name: dict[str, object] = {}
-            paths: list[str] = []
-            for p in group:
-                try:
-                    files = export_photo(p, folder, edited_mode)
-                except Exception as e:  # noqa: BLE001
-                    failed.append({"uuid": p.uuid, "name": p.original_filename,
-                                   "reason": f"couldn’t export: {e}"})
-                    continue
-                if not files:
-                    failed.append({"uuid": p.uuid, "name": p.original_filename,
-                                   "reason": "the original file is missing"})
-                    continue
-                for f in files:
-                    by_name[f.name.lower()] = p
-                paths += [str(f) for f in files]
-            emit("progress", phase="importing", done=done, total=total)
-            if paths:
-                result = lib.import_photos(paths, skip_duplicate_check=True)
-                for item in result:
-                    p = by_name.get((item.filename or "").lower())
-                    imported_count += 1
-                    if p is None:
-                        continue
+        try:
+            for group in batches(todo):
+                folder = staging / f"batch-{done}"
+                folder.mkdir()
+                by_name: dict[str, object] = {}
+                paths: list[str] = []
+                for p in group:
                     try:
-                        apply_details(item, p, albums_cache, lib)
+                        files = export_photo(p, folder, edited_mode)
                     except Exception as e:  # noqa: BLE001
                         failed.append({"uuid": p.uuid, "name": p.original_filename,
-                                       "reason": f"imported, but details weren’t set: {e}"})
-            shutil.rmtree(folder, ignore_errors=True)
-            done += len(group)
-            emit("progress", phase="importing", done=done, total=total)
+                                       "reason": f"couldn’t export: {e}"})
+                        continue
+                    if not files:
+                        failed.append({"uuid": p.uuid, "name": p.original_filename,
+                                       "reason": "the original file is missing"})
+                        continue
+                    for f in files:
+                        by_name[f.name.lower()] = p
+                    paths += [str(f) for f in files]
+                emit("progress", phase="importing", done=done, total=total)
+                if paths:
+                    result = lib.import_photos(paths, skip_duplicate_check=True)
+                    for item in result:
+                        p = by_name.get((item.filename or "").lower())
+                        imported_count += 1
+                        if p is None:
+                            continue
+                        if p.uuid not in imported_uuids:
+                            imported_uuids.append(p.uuid)
+                        try:
+                            apply_details(item, p, albums_cache, lib)
+                        except Exception as e:  # noqa: BLE001
+                            failed.append({"uuid": p.uuid, "name": p.original_filename,
+                                           "reason": f"imported, but details weren’t set: {e}"})
+                shutil.rmtree(folder, ignore_errors=True)
+                done += len(group)
+                emit("progress", phase="importing", done=done, total=total)
+        except KeyboardInterrupt:  # Cancel: report what did get imported
+            cancelled = True
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
     summary = {"imported": imported_count, "requested": total, "failed": failed,
+               "imported_uuids": imported_uuids, "cancelled": cancelled,
                "skipped_edited": [{"uuid": p.uuid, "name": p.original_filename}
                                   for p in skipped]}
     emit("done", **summary)
@@ -403,8 +411,10 @@ def finish(src: Path, dst: Path, run: dict, emit=lambda *a, **k: None) -> dict:
                                "reason": f"imported, but title/caption/keywords weren’t set: {e}"})
             emit("progress", phase="details", done=i, total=len(needs_details))
 
-    summary = {"imported": len(created), "requested": run.get("requested", len(created)),
-               "failed": failed, "skipped_edited": []}
+    imported = [s for s, d in created.items() if d in made]
+    summary = {"imported": len(imported), "requested": run.get("requested", len(created)),
+               "failed": failed, "imported_uuids": imported,
+               "cancelled": bool(run.get("cancelled")), "skipped_edited": []}
     emit("done", **summary)
     return summary
 

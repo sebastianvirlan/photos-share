@@ -36,6 +36,20 @@ enum Snapshot {
         keeping.showForSnapshot(system, source: URL(fileURLWithPath: "/Volumes/HDD/iPhone 13 Backup.photoslibrary"),
                                 dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
         render(ImportView(model: keeping).frame(width: 960, height: 640), to: dir, name: "import-keeps-edits")
+        let busy = ImportModel()
+        busy.showForSnapshot(system, source: URL(fileURLWithPath: "/Volumes/HDD/iPhone 13 Backup.photoslibrary"),
+                             dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
+        busy.showProgressForSnapshot(done: 30, total: 120)
+        render(ImportView(model: busy).frame(width: 960, height: 640), to: dir, name: "import-progress")
+        let after = ImportModel()
+        after.showForSnapshot(system, source: URL(fileURLWithPath: "/Volumes/HDD/iPhone 13 Backup.photoslibrary"),
+                              dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
+        let newOnes = system.items.filter { !$0.in_dest }.map(\.uuid)
+        after.showResultForSnapshot(ImportSummary(
+            imported: 10, requested: 12,
+            failed: [.init(uuid: "x", name: "IMG_0042.HEIC", reason: "Photos refused it: unsupported file")],
+            skipped_edited: [], imported_uuids: Array(newOnes.prefix(10))))
+        render(ImportView(model: after).frame(width: 960, height: 640), to: dir, name: "import-result")
         render(PhotoPreview(model: keeping, uuid: system.items[0].uuid).frame(width: 1000, height: 700),
                to: dir, name: "import-preview")
 

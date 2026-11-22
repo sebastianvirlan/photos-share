@@ -164,6 +164,7 @@ def test_run_import(monkeypatch, tmp_path):
                               ["A", "B", "E", "M"], "skip",
                               emit=lambda e, **d: events.append((e, d)))
     assert out["imported"] == 2 and out["requested"] == 3
+    assert out["imported_uuids"] == ["A", "B"] and out["cancelled"] is False
     assert [s["uuid"] for s in out["skipped_edited"]] == ["E"]
     assert out["failed"] == [{"uuid": "M", "name": "IMG_M.HEIC", "reason": "the original file is missing"}]
     assert opened == ["/d.photoslibrary"]
@@ -315,6 +316,7 @@ def test_finish(monkeypatch, lib):
     out = importer.finish(lib, lib.with_name("D.photoslibrary"), run,
                           emit=lambda e, **d: events.append((e, d)))
     assert out["imported"] == 2 and out["requested"] == 3
+    assert out["imported_uuids"] == ["A1", "A2"]
     reasons = {f["uuid"]: f["reason"] for f in out["failed"]}
     assert reasons == {"A3": "Photos refused it", "A2": "imported, but differs: the edit"}
     assert set_on["D1"] == {"title": "Beach", "keywords": ["sea"]}
@@ -337,3 +339,32 @@ def test_plan_says_whether_dest_is_system(monkeypatch, tmp_path):
     monkeypatch.setattr(dedupe, "system_library", lambda: (tmp_path / "D.photoslibrary").resolve())
     assert importer.Plan(tmp_path / "S.photoslibrary", tmp_path / "D.photoslibrary").to_json()["dest_is_system"]
     assert not importer.Plan(tmp_path / "D.photoslibrary", tmp_path / "S.photoslibrary").to_json()["dest_is_system"]
+
+
+def test_run_import_cancel_reports_what_was_imported(monkeypatch):
+    src_photos = [photo(str(i)) for i in range(60)]   # two batches
+    monkeypatch.setattr(importer, "_photos", lambda p: src_photos)
+    monkeypatch.setattr(importer, "_wait_for_library", lambda p: None)
+
+    def fake_export(p, folder, mode):
+        f = folder / p.original_filename
+        f.write_bytes(b"x")
+        return [f]
+    monkeypatch.setattr(importer, "export_photo", fake_export)
+    calls = []
+
+    class Lib(FakeLibrary):
+        def open(self, path):
+            pass
+
+        def import_photos(self, paths, skip_duplicate_check=False):
+            calls.append(len(paths))
+            if len(calls) == 2:
+                raise KeyboardInterrupt   # Cancel during the second batch
+            return [Imported(Path(x).name) for x in paths]
+
+    monkeypatch.setitem(sys.modules, "photoscript", types.SimpleNamespace(PhotosLibrary=Lib))
+    out = importer.run_import(Path("/s.photoslibrary"), Path("/d.photoslibrary"),
+                              [p.uuid for p in src_photos])
+    assert out["cancelled"] is True
+    assert out["imported_uuids"] == [str(i) for i in range(50)]

@@ -10,6 +10,7 @@ struct ImportView: View {
     @State private var marqueeBase: Set<String>?
     @State private var marqueeMode: ImportModel.MarqueeMode = .replace
     @State private var previewing: PreviewTarget?
+    @State private var showingDetails = false
     @AppStorage("gridTileSize") private var tileSize = 110.0
 
     var body: some View {
@@ -85,12 +86,9 @@ struct ImportView: View {
                 filters
                 grid
                 Divider()
+                resultStrip
                 bottomBar
             }
-        case .importing:
-            progress
-        case .done:
-            result
         }
     }
 
@@ -213,79 +211,73 @@ struct ImportView: View {
             }
     }
 
-    private var bottomBar: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(model.selection.count) selected").font(.headline)
-                Text("\(model.visible.count) shown · \(model.alreadyInDest) already in “\(model.plan?.dest_name ?? "")”")
+    /// While importing: progress and Cancel. Otherwise: selection and the Import button.
+    @ViewBuilder private var bottomBar: some View {
+        if model.isImporting {
+            HStack(spacing: 14) {
+                ProgressView().controlSize(.small)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(model.phase)… \(model.done) of \(model.total)").font(.headline)
+                    ProgressView(value: Double(model.done), total: Double(max(model.total, 1)))
+                        .frame(maxWidth: 360)
+                }
+                Text("You can keep browsing and selecting meanwhile.")
                     .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel", role: .cancel) { model.cancel() }
+                    .help("Stops after the current batch. Photos already added stay in “\(model.plan?.dest_name ?? "")”.")
             }
-            Button("Select All") { model.selectVisible() }
-            Button("Select None") { model.deselectVisible() }
-            Spacer()
-            if model.selectedEdited > 0 && !model.keepsEdits {
-                Picker("\(model.selectedEdited) edited:", selection: $model.editedMode) {
-                    ForEach(EditedMode.allCases) { Text($0.title).tag($0) }
+            .padding(.horizontal, 24).padding(.vertical, 14)
+        } else {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(model.selection.count) selected").font(.headline)
+                    Text("\(model.visible.count) shown · \(model.alreadyInDest) already in “\(model.plan?.dest_name ?? "")”")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: 330)
-                .help(model.editedMode.detail)
+                Button("Select All") { model.selectVisible() }
+                Button("Select None") { model.deselectVisible() }
+                Spacer()
+                if model.selectedEdited > 0 && !model.keepsEdits {
+                    Picker("\(model.selectedEdited) edited:", selection: $model.editedMode) {
+                        ForEach(EditedMode.allCases) { Text($0.title).tag($0) }
+                    }
+                    .frame(maxWidth: 330)
+                    .help(model.editedMode.detail)
+                }
+                Button {
+                    confirming = true
+                } label: {
+                    Label("Import \(model.importCount) Photos", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(model.importCount == 0)
             }
-            Button {
-                confirming = true
-            } label: {
-                Label("Import \(model.importCount) Photos", systemImage: "square.and.arrow.down")
-            }
-            .buttonStyle(.borderedProminent).controlSize(.large)
-            .disabled(model.importCount == 0)
+            .padding(.horizontal, 24).padding(.vertical, 14)
         }
-        .padding(.horizontal, 24).padding(.vertical, 14)
     }
 
-    private var progress: some View {
-        VStack(spacing: 14) {
-            ProgressView(value: Double(model.done), total: Double(max(model.total, 1)))
-                .frame(width: 380)
-            Text("\(model.phase)… \(model.done) of \(model.total)").font(.headline)
-            Text(model.keepsEdits
-                 ? "Adding them to “\(model.plan?.dest_name ?? "")” with their edits. Photos already added stay if you cancel."
-                 : "Photos is adding them to “\(model.plan?.dest_name ?? "")”. Photos already added stay if you cancel.")
-                .foregroundStyle(.secondary)
-            Button("Cancel", role: .cancel) { model.cancel() }
-        }
-        .padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var result: some View {
-        let s = model.summary
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Label("Imported \(s?.imported ?? 0) of \(s?.requested ?? 0) into “\(model.plan?.dest_name ?? "")”",
-                      systemImage: "checkmark.circle.fill")
-                    .font(.title3.weight(.semibold)).foregroundStyle(.green)
-                if let skipped = s?.skipped_edited, !skipped.isEmpty {
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("To bring these across with their edits still editable, make “\(model.plan?.dest_name ?? "")” the System Photo Library (Photos → Settings → General), then import them again here.")
-                                .foregroundStyle(.secondary)
-                            Text(skipped.compactMap(\.name).joined(separator: ", "))
-                                .font(.caption.monospaced()).textSelection(.enabled)
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    } label: {
-                        Label("\(skipped.count) edited photos skipped", systemImage: "pencil.circle")
-                    }
+    /// The last import's outcome, above the bottom bar; details in a popover.
+    @ViewBuilder private var resultStrip: some View {
+        if !model.isImporting, model.summary != nil || model.importError != nil {
+            let s = model.summary
+            let problems = (s?.failed.count ?? 0) + (s?.skipped_edited.count ?? 0)
+            HStack(spacing: 12) {
+                if let error = model.importError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange).lineLimit(2).textSelection(.enabled)
+                } else if let s {
+                    Label("\(s.cancelled == true ? "Cancelled: imported" : "Imported") \(s.imported) of \(s.requested) into “\(model.plan?.dest_name ?? "")”"
+                          + (problems > 0 ? " · \(problems) to look at" : ""),
+                          systemImage: problems > 0 ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                        .foregroundStyle(problems > 0 ? .orange : .green)
                 }
-                if let failed = s?.failed, !failed.isEmpty {
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(failed, id: \.self) { f in
-                                Text("\(f.name ?? f.uuid): \(f.reason)").font(.caption).textSelection(.enabled)
-                            }
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    } label: {
-                        Label("\(failed.count) problems", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                    }
+                Spacer()
+                if problems > 0 {
+                    Button("Details") { showingDetails = true }
+                        .popover(isPresented: $showingDetails, arrowEdge: .top) { resultDetails.frame(width: 520) }
                 }
-                HStack {
+                if (s?.imported ?? 0) > 0 {
                     Button {
                         let c = CleanupModel.shared
                         c.prepare(source: model.source, dest: model.dest)
@@ -295,15 +287,45 @@ struct ImportView: View {
                     } label: {
                         Label("Open Clean Up", systemImage: "checkmark.shield")
                     }
-                    .buttonStyle(.borderedProminent)
                     .help("Check what arrived, then optionally remove it from “\(model.plan?.source_name ?? "")”.")
-                    Button("Import More") { Task { await model.load() } }
+                }
+                Button { model.dismissResult() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless).help("Dismiss")
+            }
+            .font(.callout)
+            .padding(.horizontal, 24).padding(.vertical, 10)
+            .background(.quaternary.opacity(0.5))
+        }
+    }
+
+    private var resultDetails: some View {
+        let s = model.summary
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if let skipped = s?.skipped_edited, !skipped.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("\(skipped.count) edited photos skipped", systemImage: "pencil.circle").font(.headline)
+                        Text("To bring these across with their edits still editable, make “\(model.plan?.dest_name ?? "")” the System Photo Library (Photos → Settings → General), then import them again here.")
+                            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(skipped.compactMap(\.name).joined(separator: ", "))
+                            .font(.caption.monospaced()).textSelection(.enabled)
+                    }
+                }
+                if let failed = s?.failed, !failed.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("\(failed.count) problems", systemImage: "exclamationmark.triangle")
+                            .font(.headline).foregroundStyle(.orange)
+                        ForEach(failed, id: \.self) { f in
+                            Text("\(f.name ?? f.uuid): \(f.reason)").font(.caption).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
             }
-            .padding(28)
-            .frame(maxWidth: 640, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxHeight: 420)
     }
 
     // MARK: - Helpers

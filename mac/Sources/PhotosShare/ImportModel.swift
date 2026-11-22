@@ -12,7 +12,7 @@ struct ImportItem: Codable, Identifiable, Hashable {
     let edited: Bool
     let hidden: Bool
     let albums: [String]
-    let in_dest: Bool
+    var in_dest: Bool
     var original: String? = nil
     var id: String { uuid }
     var year: String { String(date.prefix(4)) }
@@ -24,7 +24,7 @@ struct ImportPlan: Codable {
     let source_name: String
     let dest_name: String
     let albums: [String]
-    let items: [ImportItem]
+    var items: [ImportItem]
     var dest_is_system: Bool? = nil
 }
 
@@ -35,6 +35,8 @@ struct ImportSummary: Codable {
     let requested: Int
     let failed: [Problem]
     let skipped_edited: [Named]
+    var imported_uuids: [String]? = nil
+    var cancelled: Bool? = nil
 }
 
 enum EditedMode: String, CaseIterable, Identifiable {
@@ -64,7 +66,7 @@ enum MediaFilter: String, CaseIterable, Identifiable {
 @MainActor @Observable
 final class ImportModel {
     static let shared = ImportModel()
-    enum State { case idle, loading, ready, importing, done, failed(String) }
+    enum State { case idle, loading, ready, failed(String) }
 
     var source: URL?
     var dest: URL?
@@ -84,7 +86,11 @@ final class ImportModel {
     private(set) var phase = ""
     private(set) var done = 0
     private(set) var total = 0
+    /// The last import's result, shown above the bottom bar until dismissed or the next import.
     private(set) var summary: ImportSummary?
+    private(set) var importError: String?
+    /// Importing runs under the grid, so you can keep browsing and selecting.
+    private(set) var isImporting = false
     private var process: Process?
     private var cancelled = false
 
@@ -99,8 +105,7 @@ final class ImportModel {
     var canLoad: Bool {
         guard let source, let dest, source != dest else { return false }
         if case .loading = state { return false }
-        if case .importing = state { return false }
-        return true
+        return !isImporting
     }
 
     var visible: [ImportItem] {
@@ -122,6 +127,7 @@ final class ImportModel {
         guard let source, let dest else { return }
         state = .loading
         summary = nil
+        importError = nil
         var args = [source.path, dest.path, "--plan", "--json"]
         if includeHidden { args.append("--hidden") }
         do {
@@ -181,33 +187,55 @@ final class ImportModel {
     func deselectVisible() { selection.subtract(visible.map(\.uuid)) }
 
     func start() {
-        guard source != nil, dest != nil, !selection.isEmpty else { return }
+        guard source != nil, dest != nil, !selection.isEmpty, !isImporting else { return }
+        let uuids = selection
         cancelled = false
-        state = .importing
+        isImporting = true
+        importError = nil
+        summary = nil
         phase = "Starting"
         done = 0
-        total = selection.count
-        summary = nil
+        total = uuids.count
         if keepsEdits {
-            Task { await importKeepingEdits() }
+            Task { await importKeepingEdits(uuids) }
         } else {
-            importThroughPhotos()
+            importThroughPhotos(uuids)
         }
     }
 
-    private func writeSelection() throws -> URL {
+    func dismissResult() {
+        summary = nil
+        importError = nil
+    }
+
+    private func writeSelection(_ uuids: Set<String>) throws -> URL {
         let list = FileManager.default.temporaryDirectory
             .appendingPathComponent("photos-import-\(UUID().uuidString).txt")
-        try selection.joined(separator: "\n").write(to: list, atomically: true, encoding: .utf8)
+        try uuids.joined(separator: "\n").write(to: list, atomically: true, encoding: .utf8)
         return list
     }
 
+    private func stopImporting(_ error: String) {
+        importError = error
+        isImporting = false
+        process = nil
+    }
+
+    /// What was imported is now in the destination: mark it so, and take it out of the selection.
+    private func apply(_ result: ImportSummary) {
+        let imported = Set(result.imported_uuids ?? [])
+        guard var p = plan, !imported.isEmpty else { return }
+        for i in p.items.indices where imported.contains(p.items[i].uuid) { p.items[i].in_dest = true }
+        plan = p
+        selection.subtract(imported)
+    }
+
     /// Photos' scripting import: edit recipes are ignored, so edited photos are skipped or flattened.
-    private func importThroughPhotos() {
+    private func importThroughPhotos(_ uuids: Set<String>) {
         guard let source, let dest else { return }
         let list: URL
-        do { list = try writeSelection() } catch {
-            state = .failed("Couldn’t prepare the import: \(error.localizedDescription)")
+        do { list = try writeSelection(uuids) } catch {
+            stopImporting("Couldn’t prepare the import: \(error.localizedDescription)")
             return
         }
         do {
@@ -220,17 +248,17 @@ final class ImportModel {
                     self?.finished(code, stderr)
                 })
         } catch {
-            state = .failed("Couldn’t run photos-import: \(error.localizedDescription)")
+            stopImporting("Couldn’t run photos-import: \(error.localizedDescription)")
         }
     }
 
     /// Creates the photos ourselves (PhotoKit) with all their parts, so edits stay editable,
     /// then lets photos-import check them and add titles, captions and keywords.
-    private func importKeepingEdits() async {
+    private func importKeepingEdits(_ uuids: Set<String>) async {
         guard let source, let dest else { return }
         do {
             phase = "Preparing"
-            let list = try writeSelection()
+            let list = try writeSelection(uuids)
             defer { try? FileManager.default.removeItem(at: list) }
             let (code, out, err) = try await Tools.run("photos-import", [source.path, dest.path, "--parts", "--uuids-file", list.path, "--json"])
             if let obj = try? JSONSerialization.jsonObject(with: out) as? [String: Any],
@@ -243,7 +271,7 @@ final class ImportModel {
             let manifest = try JSONDecoder().decode(PhotoKitImport.Manifest.self, from: out)
             try await PhotoKitImport.authorize()
 
-            var run = PhotoKitImport.Run(requested: selection.count, failed: manifest.problems)
+            var run = PhotoKitImport.Run(requested: uuids.count, failed: manifest.problems)
             let albums = try await PhotoKitImport.albums(named: Set(manifest.items.flatMap(\.albums)))
             phase = "Importing"
             done = manifest.problems.count
@@ -256,6 +284,7 @@ final class ImportModel {
             }
             if cancelled {
                 run.requested = run.created.count + run.failed.count
+                run.cancelled = true
             }
 
             let runFile = FileManager.default.temporaryDirectory
@@ -270,7 +299,7 @@ final class ImportModel {
                     self?.finished(code, stderr)
                 })
         } catch {
-            state = .failed(error.localizedDescription)
+            stopImporting(error.localizedDescription)
         }
     }
 
@@ -296,22 +325,35 @@ final class ImportModel {
             default: phase = "Importing"
             }
         case "done":
-            summary = try? JSONDecoder().decode(ImportSummary.self, from: data)
-            state = .done
+            if let result = try? JSONDecoder().decode(ImportSummary.self, from: data) {
+                summary = result
+                apply(result)
+            }
+            isImporting = false
         case "error":
-            state = .failed(obj["message"] as? String ?? "Import failed.")
+            stopImporting(obj["message"] as? String ?? "Import failed.")
         case "cancelled":
-            state = .failed("Import cancelled. Photos already imported stay in the destination.")
+            stopImporting("Import cancelled. Photos already imported stay in the destination; Reload to see which.")
         default: break
         }
     }
 
     private func finished(_ code: Int32, _ stderr: String) {
         process = nil
-        if case .importing = state {
-            state = .failed(stderr.split(separator: "\n").last.map(String.init)
-                            ?? "photos-import stopped unexpectedly (code \(code)).")
+        if isImporting {
+            stopImporting(stderr.split(separator: "\n").last.map(String.init)
+                          ?? "photos-import stopped unexpectedly (code \(code)).")
         }
+    }
+
+    /// For `--snapshot` renders only.
+    func showProgressForSnapshot(done: Int, total: Int) {
+        isImporting = true; phase = "Importing"; self.done = done; self.total = total
+    }
+
+    /// For `--snapshot` renders only.
+    func showResultForSnapshot(_ result: ImportSummary) {
+        isImporting = false; summary = result; apply(result)
     }
 
     /// For `--snapshot` renders only.

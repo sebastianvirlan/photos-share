@@ -36,6 +36,7 @@ enum PhotoKitImport {
         var requested: Int
         var created: [Created] = []
         var failed: [ImportSummary.Problem] = []
+        var cancelled = false
     }
 
     static let batchSize = 10
