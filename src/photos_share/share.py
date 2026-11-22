@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -32,6 +33,7 @@ class ShareConfig:
     mode: str = "local"         # local | tailscale | funnel
     host: str = "127.0.0.1"     # used in local mode only
     port: int = 8080
+    keep_awake: bool = True     # stop the Mac idle-sleeping while sharing
 
 
 class Share:
@@ -61,6 +63,7 @@ class Share:
         self._server = None
         self._thread: threading.Thread | None = None
         self._funnel: subprocess.Popen | None = None
+        self._caffeinate: subprocess.Popen | None = None
 
     # ---- network -----------------------------------------------------------
 
@@ -91,6 +94,21 @@ class Share:
         app = create_app(self.collection, self.cfg.video, self.cfg.downloads, self.auth)
         return uvicorn.Server(uvicorn.Config(app, host=self.host, port=self.cfg.port,
                                              log_level="warning"))
+
+    def start_keep_awake(self) -> None:
+        """Prevent idle sleep until stop_keep_awake() or until this process exits.
+
+        `caffeinate -w <pid>` ends by itself if this process dies, so a crash can't leave
+        the Mac permanently awake. Closing a laptop lid still sleeps it.
+        """
+        if self.cfg.keep_awake and self._caffeinate is None and shutil.which("caffeinate"):
+            self._caffeinate = subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
+
+    def stop_keep_awake(self) -> None:
+        if self._caffeinate and self._caffeinate.poll() is None:
+            self._caffeinate.terminate()
+            self._caffeinate.wait(timeout=5)
+        self._caffeinate = None
 
     def start_funnel(self) -> None:
         if self.cfg.mode != "funnel":
@@ -133,8 +151,10 @@ class Share:
         except ShareError:
             self.stop()
             raise
+        self.start_keep_awake()
 
     def stop(self) -> None:
+        self.stop_keep_awake()
         self.stop_funnel()
         if self._server:
             self._server.should_exit = True

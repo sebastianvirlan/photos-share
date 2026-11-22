@@ -33,6 +33,8 @@ def main() -> None:
                           "viewers; requires a password)")
     net.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--no-keep-awake", dest="keep_awake", action="store_false",
+                        help="let the Mac sleep while sharing (by default it's kept awake)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -53,7 +55,7 @@ def main() -> None:
     mode = "tailscale" if args.tailscale else "funnel" if args.funnel else "local"
     cfg = ShareConfig(path=args.path, only=args.only or [], screenshots=args.screenshots,
                       video=args.video, downloads=args.downloads, password=password,
-                      mode=mode, host=args.host, port=args.port)
+                      mode=mode, host=args.host, port=args.port, keep_awake=args.keep_awake)
     try:
         share = Share(cfg)
     except ShareError as e:
@@ -65,7 +67,8 @@ def main() -> None:
           f"({ready} already indexed; others index on first open)")
     print(f"Screenshots: {'shown' if args.screenshots else 'hidden'} · "
           f"Video: {args.video} · Downloads: {'on' if args.downloads else 'off'} · "
-          f"Password: {'on' if password else 'off'} · Hidden & deleted photos: excluded")
+          f"Password: {'on' if password else 'off'} · "
+          f"Keep awake: {'on' if args.keep_awake else 'off'} · Hidden & deleted photos: excluded")
     if mode == "funnel":
         print("\n⚠ PUBLIC link: anyone who has it reaches the password page.")
     elif mode == "local" and args.host not in ("127.0.0.1", "localhost"):
@@ -75,10 +78,12 @@ def main() -> None:
         share.start_funnel()
     except ShareError as e:
         sys.exit(f"Error: {e}")
+    share.start_keep_awake()
     print(f"\nSharing at: {share.url}\nPress Ctrl+C to stop sharing.", flush=True)
     try:
         share.server().run()  # blocks; handles Ctrl+C
     finally:
+        share.stop_keep_awake()
         if mode == "funnel":
             share.stop_funnel()
             print("Public link closed.")

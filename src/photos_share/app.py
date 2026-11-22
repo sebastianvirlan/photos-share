@@ -19,7 +19,8 @@ KEYCHAIN_SERVICE = "photos-share"
 MODE_LABELS = {"local": "This Mac only", "tailscale": "Tailscale (private, viewers need the app)",
                "funnel": "Public link with password (Tailscale Funnel)"}
 DEFAULTS = {"path": None, "mode": "tailscale", "screenshots": False, "downloads": False,
-            "convert_video": False, "require_password": False, "port": 8080}
+            "convert_video": False, "require_password": False, "keep_awake": True,
+            "port": 8080}
 
 log = logging.getLogger("photos_share")
 
@@ -39,6 +40,7 @@ class PhotosShareApp(rumps.App):
             "downloads": rumps.MenuItem("Allow downloading originals", callback=self.toggle),
             "convert_video": rumps.MenuItem("Convert videos for any browser", callback=self.toggle),
             "require_password": rumps.MenuItem("Require password", callback=self.toggle),
+            "keep_awake": rumps.MenuItem("Keep Mac awake while sharing", callback=self.toggle),
         }
         self.start_stop = rumps.MenuItem("Start Sharing", callback=self.start_or_stop)
         self.copy_item = rumps.MenuItem("Copy Link", callback=self.copy_link)
@@ -158,7 +160,7 @@ class PhotosShareApp(rumps.App):
         cfg = ShareConfig(path=Path(s["path"]), screenshots=s["screenshots"],
                           video="convert" if s["convert_video"] else "original",
                           downloads=s["downloads"], password=password, mode=s["mode"],
-                          port=s["port"])
+                          port=s["port"], keep_awake=s["keep_awake"])
         try:
             share = Share(cfg)
             share.start_background()
