@@ -71,13 +71,17 @@ enum EditSpike {
                 continue
             }
             for a in candidates {
-                do {
-                    say("… \(e.name): saving the edit\(isEdited(a) ? ", replacing the edit it has" : "") (macOS may ask you to allow it)")
-                    NSApp.activate(ignoringOtherApps: true)
-                    try await apply(e, to: a)
-                    say("✓ \(e.name): edit saved (\(e.format_id) \(e.format_version))")
-                } catch {
-                    say("✗ \(e.name): \(error.localizedDescription)")
+                say("… \(e.name): \(a.pixelWidth)×\(a.pixelHeight)\(isEdited(a) ? ", has an edit already (will be replaced)" : ""), edited image: \(describe(URL(fileURLWithPath: e.rendered)))")
+                NSApp.activate(ignoringOtherApps: true)
+                var saved = false
+                for attempt in Attempt.allCases where !saved {
+                    do {
+                        try await apply(e, to: a, attempt)
+                        say("✓ \(e.name): saved with \(attempt.label)")
+                        saved = true
+                    } catch {
+                        say("  ✗ \(attempt.label): \(error.localizedDescription)")
+                    }
                 }
             }
         }
@@ -88,16 +92,40 @@ enum EditSpike {
         PHAssetResource.assetResources(for: a).contains { $0.type == .adjustmentData || $0.type == .fullSizePhoto }
     }
 
-    private static func apply(_ e: Entry, to asset: PHAsset) async throws {
+    enum Attempt: CaseIterable {
+        case appleJPEG, appleHEIC, ownJPEG
+        var label: String {
+            switch self {
+            case .appleJPEG: "Apple’s edit format + clean JPEG"
+            case .appleHEIC: "Apple’s edit format + HEIC"
+            case .ownJPEG: "our own edit format + clean JPEG (reversible only, not re-editable)"
+            }
+        }
+    }
+
+    private static func apply(_ e: Entry, to asset: PHAsset, _ attempt: Attempt) async throws {
         guard let data = Data(base64Encoded: e.data) else { throw Failure("bad recipe data") }
         let input = try await editingInput(asset)
         let output = PHContentEditingOutput(contentEditingInput: input)
-        output.adjustmentData = PHAdjustmentData(formatIdentifier: e.format_id,
-                                                 formatVersion: e.format_version, data: data)
-        try writeJPEG(from: URL(fileURLWithPath: e.rendered), to: output.renderedContentURL)
+        output.adjustmentData = attempt == .ownJPEG
+            ? PHAdjustmentData(formatIdentifier: "com.photosshare.restored-edit", formatVersion: "1",
+                               data: Data(e.format_id.utf8) + data)
+            : PHAdjustmentData(formatIdentifier: e.format_id, formatVersion: e.format_version, data: data)
+        let src = URL(fileURLWithPath: e.rendered)
+        if attempt == .appleHEIC {
+            try writeClean(from: src, to: try output.renderedContentURL(for: .heic), type: .heic)
+        } else {
+            try writeClean(from: src, to: output.renderedContentURL, type: .jpeg)
+        }
         try await PHPhotoLibrary.shared().performChanges {
             PHAssetChangeRequest(for: asset).contentEditingOutput = output
         }
+    }
+
+    private static func describe(_ url: URL) -> String {
+        guard let s = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let p = CGImageSourceCopyPropertiesAtIndex(s, 0, nil) as? [CFString: Any] else { return "unreadable \(url.lastPathComponent)" }
+        return "\(url.lastPathComponent) \(p[kCGImagePropertyPixelWidth] ?? "?")×\(p[kCGImagePropertyPixelHeight] ?? "?") orientation \(p[kCGImagePropertyOrientation] ?? 1)"
     }
 
     private static func editingInput(_ asset: PHAsset) async throws -> PHContentEditingInput {
@@ -112,12 +140,18 @@ enum EditSpike {
         }
     }
 
-    private static func writeJPEG(from src: URL, to dst: URL) throws {
+    /// Redraws the image upright with no metadata, at full size.
+    private static func writeClean(from src: URL, to dst: URL, type: UTType) throws {
         guard let source = CGImageSourceCreateWithURL(src as CFURL, nil),
-              let dest = CGImageDestinationCreateWithURL(dst as CFURL, UTType.jpeg.identifier as CFString, 1, nil)
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int, let h = props[kCGImagePropertyPixelHeight] as? Int,
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: max(w, h)] as CFDictionary),
+              let dest = CGImageDestinationCreateWithURL(dst as CFURL, type.identifier as CFString, 1, nil)
         else { throw Failure("couldn’t read the edited image \(src.lastPathComponent)") }
-        CGImageDestinationAddImageFromSource(dest, source, 0,
-            [kCGImageDestinationLossyCompressionQuality: 0.95] as CFDictionary)
+        CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: 0.95] as CFDictionary)
         guard CGImageDestinationFinalize(dest) else { throw Failure("couldn’t write the edited image") }
     }
 
