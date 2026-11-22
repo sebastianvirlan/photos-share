@@ -37,17 +37,21 @@ struct Thumbnail: View {
     @State private var failed = false
 
     var body: some View {
-        ZStack {
-            Rectangle().fill(.quaternary)
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: fill ? .fill : .fit)
-            } else if failed || path == nil {
-                Image(systemName: "photo").foregroundStyle(.secondary)
+        // The background takes the size the layout offers; the image only draws inside it.
+        // (Sized by the image instead, a wide or tall photo set to fill would grow the tile
+        // past its square and spill over its neighbours.)
+        Rectangle().fill(.quaternary)
+            .overlay {
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: fill ? .fill : .fit)
+                } else if failed || path == nil {
+                    Image(systemName: "photo").foregroundStyle(.secondary)
+                }
             }
-        }
-        .clipped()
+            .clipped()
+            .contentShape(Rectangle())  // clicks land on the tile, not the cropped-off parts
         .task(id: path) {
             guard let path else { return }
             image = await ThumbnailCache.shared.image(at: path, maxPixels: maxPixels)
