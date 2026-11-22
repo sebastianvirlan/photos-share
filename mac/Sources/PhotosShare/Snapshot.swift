@@ -61,6 +61,22 @@ enum Snapshot {
         render(PhotoPreview(model: videoModel, uuid: withVideo.items[8].uuid).frame(width: 1000, height: 700),
                to: dir, name: "import-preview-video")
 
+        let dup = DuplicatesModel()
+        render(DuplicatesView(model: dup).frame(width: 960, height: 640), to: dir, name: "duplicates-empty")
+        let dupLoaded = DuplicatesModel()
+        dupLoaded.showForSnapshot(dupSample, library: URL(fileURLWithPath: "/Volumes/HDD/Seb&Mariana.photoslibrary"), system: false)
+        render(DuplicatesView(model: dupLoaded).frame(width: 1000, height: 700), to: dir, name: "duplicates-results")
+        // The list scrolls (which ImageRenderer can't draw): the tiles on their own.
+        render(VStack(alignment: .leading, spacing: 16) {
+            ForEach(dupSample) { g in
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(g.copies) { c in
+                        CopyTile(copy: c, keep: c.uuid == g.keep, removing: c.uuid != g.keep, exact: g.exact, size: 150)
+                    }
+                }
+            }
+        }.padding(20).frame(width: 700), to: dir, name: "duplicates-tiles")
+
         // ShareView is an AppKit-backed grouped Form, which ImageRenderer can't draw.
         exit(0)
     }
@@ -75,6 +91,21 @@ enum Snapshot {
         try? png.write(to: dir.appendingPathComponent("\(name).png"))
         print("wrote \(name).png")
     }
+
+    private static let dupSample: [DupGroup] = {
+        func c(_ u: String, _ name: String, w: Int = 4032, h: Int = 3024, size: Int = 2_400_000, fav: Bool = false,
+               albums: [String] = [], dist: Int = 0) -> DupCopy {
+            DupCopy(uuid: u, name: name, date: "2025-07-20T14:03:00", added: "2025-07-21T09:00:00", thumb: nil,
+                    original: nil, width: w, height: h, size: size, movie: false, live: false, edited: false,
+                    favorite: fav, hidden: false, albums: albums, keywords: [], title: nil, description: nil,
+                    has_location: true, distance: dist)
+        }
+        return [
+            DupGroup(kind: "exact", keep: "a1", copies: [c("a1", "IMG_3621.HEIC", fav: true, albums: ["Holiday"]), c("a2", "IMG_3621.HEIC")]),
+            DupGroup(kind: "exact", keep: "b1", copies: [c("b1", "IMG_4410.HEIC"), c("b2", "IMG_4410.HEIC"), c("b3", "IMG_4410.HEIC")]),
+            DupGroup(kind: "near", keep: "n1", copies: [c("n1", "IMG_5120.HEIC"), c("n2", "IMG-20250720-WA0003.jpg", w: 1600, h: 1200, size: 310_000, dist: 3)]),
+        ]
+    }()
 
     private static let importSample: ImportPlan = {
         let items = (1...40).map { n in

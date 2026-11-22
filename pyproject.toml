@@ -12,6 +12,7 @@ dependencies = [
 [project.scripts]
 photos-share = "photos_share:main"
 photos-dedupe = "photos_share.dedupe:main"
+photos-duplicates = "photos_share.duplicates:main"
 photos-import = "photos_share.importer:main"
 
 [build-system]

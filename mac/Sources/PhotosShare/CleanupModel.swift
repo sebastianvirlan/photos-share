@@ -180,6 +180,13 @@ enum PhotoKitDelete {
         }
         let items = r.matched
         guard !items.isEmpty else { throw CleanupFailure("Nothing verified, so nothing to delete.") }
+        try await delete(items.map { ($0.uuid, $0.date) })
+        return "Deleted \(items.count) photos from “\(r.source_name)”. They’re in Recently Deleted for 30 days."
+    }
+
+    /// Deletes photos from the System Photo Library after checking each is still the photo
+    /// that was verified (same capture date). All or nothing; they go to Recently Deleted.
+    static func delete(_ items: [(uuid: String, date: String)]) async throws {
 
         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         guard status == .authorized else {
@@ -191,7 +198,7 @@ enum PhotoKitDelete {
         guard found.count == items.count else {
             throw CleanupFailure("Only \(found.count) of \(items.count) photos were found in the System Photo Library; nothing was deleted.")
         }
-        let expected = Dictionary(uniqueKeysWithValues: items.map { ($0.uuid, epoch($0.date)) })
+        let expected = Dictionary(items.map { ($0.uuid, epoch($0.date)) }, uniquingKeysWith: { a, _ in a })
         var mismatch: String?
         found.enumerateObjects { asset, _, stop in
             let uuid = String(asset.localIdentifier.split(separator: "/").first ?? "")
@@ -212,7 +219,6 @@ enum PhotoKitDelete {
         } catch {
             throw CleanupFailure("Nothing was deleted: \(error.localizedDescription)")
         }
-        return "Deleted \(items.count) photos from “\(r.source_name)”. They’re in Recently Deleted for 30 days."
     }
 
     private static func epoch(_ iso: String) -> Double? {

@@ -36,6 +36,14 @@ The app lives in the menu bar and has two windows:
   - Favourites, location, adjusted dates, album membership, Live Photos and RAW+JPEG pairs
     come across either way.
   - Afterwards, **Open Clean Up** checks what arrived.
+- **Find Duplicates:** pick one library and scan it. Exact copies (the same file more than
+  once) and look-alikes (the same picture saved again: resized, recompressed, re-exported,
+  sent through a messaging app) are shown in groups, with a suggested copy to keep (biggest,
+  then edited, favourite, in most albums…); click another to keep it instead, double-click to
+  open. Exact groups start selected; look-alikes wait for you to check them. The kept photo
+  first gets the others' favourite, albums, keywords, title, caption and place, then the
+  copies are deleted (System Photo Library: to Recently Deleted) or put in the album
+  “Duplicates to delete”. Previews are hashed once and remembered, so later scans are quick.
 - **Clean Up After Import:** pick the two libraries, see the three groups as thumbnails,
   compare any photo side by side, then **Move to Trash**, **Delete N Photos** (when the source
   is the System Photo Library) or **Mark in Photos**. Every action re-checks both libraries

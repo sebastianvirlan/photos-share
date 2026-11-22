@@ -7,6 +7,7 @@ struct PhotosShareApp: App {
     @State private var share = ShareModel.shared
     @State private var cleanup = CleanupModel.shared
     @State private var importer = ImportModel.shared
+    @State private var duplicates = DuplicatesModel.shared
 
     init() {
         MainActor.assumeIsolated { Snapshot.runIfRequested() }
@@ -30,6 +31,10 @@ struct PhotosShareApp: App {
 
         Window("Clean Up After Import", id: "cleanup") {
             CleanupView(model: cleanup)
+        }
+
+        Window("Find Duplicates", id: "duplicates") {
+            DuplicatesView(model: duplicates)
         }
     }
 }
@@ -58,6 +63,7 @@ struct MenuContent: View {
         Divider()
         Button("Import Between Libraries…") { show("import") }
         Button("Clean Up After Import…") { show("cleanup") }
+        Button("Find Duplicates…") { show("duplicates") }
         Divider()
         Button("Quit Photos Share") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
