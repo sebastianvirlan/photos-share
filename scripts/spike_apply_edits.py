@@ -9,12 +9,15 @@ Make the TEST library the System Photo Library first (Photos → Settings → Ge
   uv run python scripts/spike_apply_edits.py SOURCE              same 3 photos as step 1
   uv run python scripts/spike_apply_edits.py SOURCE --names IMG_1.HEIC,IMG_2.JPG
   uv run python scripts/spike_apply_edits.py SOURCE --album "Edit test"
+  uv run python scripts/spike_apply_edits.py SOURCE --names … --create
+        make NEW photos from original + recipe + edited image (no import needed first)
 """
 
 import argparse
 import base64
 import json
 import os
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -57,6 +60,9 @@ def main() -> None:
     ap.add_argument("--names")
     ap.add_argument("--album")
     ap.add_argument("--app", type=Path, default=None)
+    ap.add_argument("--create", action="store_true",
+                    help="create NEW photos from original + edit recipe + edited image, instead "
+                         "of editing already-imported ones")
     args = ap.parse_args()
 
     src = args.source.resolve()
@@ -75,6 +81,7 @@ def main() -> None:
     if not chosen:
         sys.exit("No matching edited photos.")
 
+    staging = Path(tempfile.mkdtemp(prefix="edit-spike-"))
     entries = []
     for p in chosen:
         plist = p.adjustments.plist if p.adjustments else {}
@@ -89,16 +96,22 @@ def main() -> None:
                         "format_version": str(plist.get("adjustmentFormatVersion", "1.0")),
                         "data": base64.b64encode(plist["adjustmentData"]).decode(),
                         "rendered": p.path_edited})
+        if args.create:
+            aae = staging / f"{Path(p.original_filename).stem}.AAE"
+            aae.write_bytes(plistlib.dumps(plist))
+            entries[-1].update(original=p.path, aae=str(aae))
         print(f"- {p.original_filename}: {plist.get('adjustmentFormatIdentifier')} "
               f"{plist.get('adjustmentFormatVersion')}, {len(plist['adjustmentData'])} bytes")
     if not entries:
         sys.exit("Nothing to apply.")
 
-    print(f"\nThis edits matching photos (replacing any edit they have) in the System Photo Library: “{system.stem}”.")
+    what = ("adds NEW photos (in a new album)" if args.create
+            else "edits matching photos (replacing any edit they have)")
+    print(f"\nThis {what} in the System Photo Library: “{system.stem}”.")
     if input("Is that your TEST library? Continue? [y/N] ").strip().lower() != "y":
         sys.exit("Cancelled.")
 
-    manifest = Path(tempfile.mkdtemp(prefix="edit-spike-")) / "manifest.json"
+    manifest = staging / "manifest.json"
     manifest.write_text(json.dumps(entries))
     log = manifest.with_suffix(".json.log")
     app = args.app or newest_app()

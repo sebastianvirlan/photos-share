@@ -16,6 +16,8 @@ enum EditSpike {
         let format_version: String
         let data: String      // base64 adjustmentData from the .AAE
         let rendered: String  // the edited image Photos made in the source library
+        var original: String? = nil  // --create: the original file, to make a new photo from
+        var aae: String? = nil       // --create: the .AAE recipe file
     }
 
     static var requested: URL? {
@@ -48,6 +50,10 @@ enum EditSpike {
         say("Asking for access to Photos (current: \(PHPhotoLibrary.authorizationStatus(for: .readWrite).rawValue))…")
         guard await PHPhotoLibrary.requestAuthorization(for: .readWrite) == .authorized else {
             return say("Photos access wasn’t granted (System Settings → Privacy & Security → Photos).")
+        }
+
+        if entries.contains(where: { $0.original != nil }) {
+            return await create(entries, say: say)
         }
 
         let all = PHAsset.fetchAssets(with: .image, options: nil)
@@ -86,6 +92,61 @@ enum EditSpike {
             }
         }
         say("\nNow look at these photos in Photos: do they look edited, is Image → Revert to Original there, and does Edit show your adjustments?")
+    }
+
+    // MARK: - Creating new photos with original + recipe + edited image in one go
+
+    private static func create(_ entries: [Entry], say: (String) -> Void) async {
+        let albumName = "Edit spike (created) \(Date().formatted(date: .omitted, time: .standard))"
+        var album: String?
+        try? await PHPhotoLibrary.shared().performChanges {
+            album = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumName)
+                .placeholderForCreatedAssetCollection.localIdentifier
+        }
+        for e in entries {
+            guard let original = e.original, let aae = e.aae else { continue }
+            say("… \(e.name): creating a new photo from original + edit recipe + edited image")
+            for (label, cleanRender) in [("edited image as Photos saved it", false), ("clean JPEG edited image", true)] {
+                do {
+                    var rendered = URL(fileURLWithPath: e.rendered)
+                    if cleanRender {
+                        rendered = FileManager.default.temporaryDirectory
+                            .appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+                        try writeClean(from: URL(fileURLWithPath: e.rendered), to: rendered, type: .jpeg)
+                    }
+                    var newID: String?
+                    try await PHPhotoLibrary.shared().performChanges {
+                        let req = PHAssetCreationRequest.forAsset()
+                        let o = PHAssetResourceCreationOptions()
+                        o.originalFilename = e.name
+                        req.addResource(with: .photo, fileURL: URL(fileURLWithPath: original), options: o)
+                        req.addResource(with: .adjustmentData, fileURL: URL(fileURLWithPath: aae), options: nil)
+                        req.addResource(with: .fullSizePhoto, fileURL: rendered, options: nil)
+                        if let ph = req.placeholderForCreatedAsset {
+                            newID = ph.localIdentifier
+                            if let album, let col = PHAssetCollection.fetchAssetCollections(
+                                withLocalIdentifiers: [album], options: nil).firstObject {
+                                PHAssetCollectionChangeRequest(for: col)?.addAssets([ph] as NSArray)
+                            }
+                        }
+                    }
+                    say("✓ \(e.name): created with \(label). \(await inspect(newID))")
+                    break
+                } catch {
+                    say("  ✗ \(label): \(error.localizedDescription)")
+                }
+            }
+        }
+        say("\nThe new photos are in the album “\(albumName)”.")
+    }
+
+    /// What Photos made of a created photo: its resources, and whose edit format it holds.
+    private static func inspect(_ id: String?) async -> String {
+        guard let id, let a = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
+        else { return "(couldn’t find it afterwards)" }
+        let types = PHAssetResource.assetResources(for: a).map { "\($0.type.rawValue)" }.joined(separator: ",")
+        let format = (try? await editingInput(a))?.adjustmentData.map { "\($0.formatIdentifier) \($0.formatVersion)" } ?? "none"
+        return "Resources [\(types)], edit format: \(format)"
     }
 
     private static func isEdited(_ a: PHAsset) -> Bool {
