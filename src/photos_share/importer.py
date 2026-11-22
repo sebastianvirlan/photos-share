@@ -7,15 +7,25 @@ what's already in the destination, batching, and carrying the details across.
   photos-import SRC DST --plan [--hidden] --json      what could be imported
   photos-import SRC DST --uuids-file F [--edited skip|flatten|both] [--json] [--yes]
 
-Edits made in Photos can't come across editable (Photos ignores .AAE recipes on import, and
-importing them breaks previews), so edited photos are skipped by default and listed, to be
-brought across with Photos' own import. `flatten` imports how they look now instead.
+Keeping edits: when DST is the System Photo Library, the Mac app creates each photo itself
+(PhotoKit) from all its parts at once: original, Live video, RAW, Photos' edit recipe and
+the edited versions. That's the only way edits arrive still editable. This tool supplies
+the parts and finishes up afterwards:
+
+  photos-import SRC DST --parts --uuids-file F        the files making up each photo (JSON)
+  photos-import SRC DST --finish F --json             check what was created, add titles etc.
+
+Otherwise (DST not the System Photo Library) photos go through Photos' scripting import,
+which ignores edit recipes, so edited photos are skipped by default and listed, or with
+`--edited flatten` imported as they look now.
 """
 
 from __future__ import annotations
 
 import argparse
+import glob
 import json
+import os
 import logging
 import shutil
 import sys
@@ -65,8 +75,10 @@ class Plan:
 
     def to_json(self) -> dict:
         albums = sorted({a for c in self.items for a in c.albums}, key=str.lower)
+        system = dedupe.system_library()
         return {"source": str(self.source), "dest": str(self.dest),
                 "source_name": self.source.stem, "dest_name": self.dest.stem,
+                "dest_is_system": system == self.dest.resolve(),
                 "albums": albums, "items": [c.__dict__ for c in self.items]}
 
 
@@ -240,6 +252,161 @@ def _wait_for_library(dst: Path, wait: float = 180) -> None:
             time.sleep(3)
 
 
+# ---- keeping edits: parts for the Mac app, then checks and details ---------------------
+
+def edited_image(p) -> str | None:
+    """The edited image/video Photos saved. osxphotos guesses its name from the original's
+    type, which misses e.g. a HEIC whose edit was saved as JPEG, so look for it too."""
+    if p.path_edited and os.path.exists(p.path_edited):
+        return str(p.path_edited)
+    pattern = f"{p.uuid}_2_0_a.*" if p.ismovie else f"{p.uuid}_1_201_a.*"
+    found = sorted(glob.glob(str(Path(p._db.library_path) / "resources" / "renders" / p.uuid[0] / pattern)))
+    return found[0] if found else None
+
+
+def edited_live_video(p) -> str | None:
+    if p.path_edited_live_photo and os.path.exists(p.path_edited_live_photo):
+        return str(p.path_edited_live_photo)
+    found = sorted(glob.glob(str(Path(p._db.library_path) / "resources" / "renders" / p.uuid[0]
+                                 / f"{p.uuid}_2_*_a.mov")))
+    return found[0] if found else None
+
+
+def _exists(path) -> bool:
+    return bool(path) and os.path.exists(path)
+
+
+def parts(p) -> tuple[list[dict], str | None]:
+    """The files to create `p` from, first = main original; or a reason it can't be."""
+    if not _exists(p.path):
+        return [], "the original file isn’t in the library"
+    r = []
+    if p.ismovie:
+        r.append({"type": "video", "path": p.path})
+    elif p.has_raw and _exists(p.path_raw):
+        main, alt = (p.path_raw, p.path) if p.raw_original else (p.path, p.path_raw)
+        r += [{"type": "photo", "path": main}, {"type": "alternatePhoto", "path": alt}]
+    else:
+        r.append({"type": "photo", "path": p.path})
+    if p.live_photo and _exists(p.path_live_photo):
+        r.append({"type": "pairedVideo", "path": p.path_live_photo})
+    if p.hasadjustments:
+        recipe, image = p.adjustments_path, edited_image(p)
+        if _exists(recipe) and image:
+            r.append({"type": "adjustmentData", "path": recipe})
+            r.append({"type": "fullSizeVideo" if p.ismovie else "fullSizePhoto", "path": image})
+            if p.live_photo and (v := edited_live_video(p)):
+                r.append({"type": "fullSizePairedVideo", "path": v, "optional": True})
+        elif image:  # no recipe: keep the look, as an uneditable edit isn't possible here
+            return [], "its edit can’t be read (no edit recipe)"
+        else:
+            return [], "Photos hasn’t saved its edited version (open it in Edit and click Done)"
+    return [{**x, "path": str(x["path"])} for x in r], None
+
+
+def manifest(src: Path, uuids: list[str]) -> dict:
+    """What the Mac app needs to create each photo (PhotoKit), plus what it can't import."""
+    wanted = set(uuids)
+    items, problems = [], []
+    for p in _photos(src):
+        if p.uuid not in wanted:
+            continue
+        files, why = parts(p)
+        if why:
+            problems.append({"uuid": p.uuid, "name": p.original_filename, "reason": why})
+            continue
+        lat, lon = p.location if p.location else (None, None)
+        items.append({"source_uuid": p.uuid, "name": p.original_filename,
+                      "date": p.date.timestamp(), "lat": lat, "lon": lon,
+                      "favorite": bool(p.favorite), "hidden": bool(p.hidden),
+                      "albums": [a for a in p.albums if a], "resources": files})
+    return {"items": items, "problems": problems}
+
+
+def _ops(p) -> list[str]:
+    adj = p.adjustments
+    return [a.get("identifier", "?") for a in (adj.adjustments if adj else []) if isinstance(a, dict)]
+
+
+def compare(src, dst) -> list[str]:
+    """What differs between a source photo and the one created from it (empty = all good)."""
+    bad = []
+    if _exists(src.path) and _exists(dst.path) and os.path.getsize(src.path) != os.path.getsize(dst.path):
+        bad.append("the original file differs")
+    if src.date and dst.date and abs(src.date.timestamp() - dst.date.timestamp()) > 1.5:
+        bad.append("date")
+    if bool(src.live_photo) != bool(dst.live_photo):
+        bad.append("Live Photo video")
+    if bool(src.has_raw) != bool(dst.has_raw):
+        bad.append("RAW file")
+    if src.hasadjustments:
+        if not dst.hasadjustments:
+            bad.append("the edit")
+        elif _ops(src) != _ops(dst):
+            bad.append("the edit’s adjustments")
+    return bad
+
+
+def _db_photos(path: Path, uuids: set[str], wait: float = 30) -> dict:
+    """Read DST until every created photo shows up (Photos writes them in the background)."""
+    import time
+    deadline = time.monotonic() + wait
+    while True:
+        found = {p.uuid: p for p in _photos(path) if p.uuid in uuids}
+        if len(found) == len(uuids) or time.monotonic() > deadline:
+            return found
+        time.sleep(3)
+
+
+def finish(src: Path, dst: Path, run: dict, emit=lambda *a, **k: None) -> dict:
+    """After the Mac app created the photos: check each against its source, and set titles,
+    captions and keywords (which PhotoKit can't) through Photos."""
+    created = {c["source_uuid"]: c["created"].split("/")[0] for c in run.get("created", [])}
+    failed = list(run.get("failed", []))
+    emit("progress", phase="checking", done=0, total=len(created))
+    sources = {p.uuid: p for p in _photos(src) if p.uuid in created}
+    made = _db_photos(dst, set(created.values()))
+    needs_details = []
+    for i, (s_uuid, d_uuid) in enumerate(created.items(), 1):
+        s, d = sources.get(s_uuid), made.get(d_uuid)
+        name = s.original_filename if s else None
+        if d is None:
+            failed.append({"uuid": s_uuid, "name": name,
+                           "reason": "created, but not found in the library afterwards"})
+        elif s is not None:
+            if bad := compare(s, d):
+                failed.append({"uuid": s_uuid, "name": name,
+                               "reason": "imported, but differs: " + ", ".join(bad)})
+            if s.title or s.description or s.keywords:
+                needs_details.append((s, d_uuid))
+        emit("progress", phase="checking", done=i, total=len(created))
+
+    if needs_details:
+        import photoscript
+        emit("progress", phase="details", done=0, total=len(needs_details))
+        lib = photoscript.PhotosLibrary()
+        lib.open(str(dst))
+        _wait_for_library(dst)
+        for i, (s, d_uuid) in enumerate(needs_details, 1):
+            try:
+                ph = photoscript.Photo(d_uuid)
+                if s.title:
+                    ph.title = s.title
+                if s.description:
+                    ph.description = s.description
+                if s.keywords:
+                    ph.keywords = list(s.keywords)
+            except Exception as e:  # noqa: BLE001
+                failed.append({"uuid": s.uuid, "name": s.original_filename,
+                               "reason": f"imported, but title/caption/keywords weren’t set: {e}"})
+            emit("progress", phase="details", done=i, total=len(needs_details))
+
+    summary = {"imported": len(created), "requested": run.get("requested", len(created)),
+               "failed": failed, "skipped_edited": []}
+    emit("done", **summary)
+    return summary
+
+
 # ---- command line ----------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> None:
@@ -253,6 +420,10 @@ def main(argv: list[str] | None = None) -> None:
                     help="edited photos: skip (default), flatten (as they look now), or both")
     ap.add_argument("--json", action="store_true", help="JSON output for the Mac app")
     ap.add_argument("--yes", action="store_true", help="don't ask before switching Photos' library")
+    ap.add_argument("--parts", action="store_true",
+                    help="print the files making up each photo in --uuids-file (for the Mac app)")
+    ap.add_argument("--finish", type=Path, metavar="FILE",
+                    help="after the Mac app created photos: check them, add titles etc.")
     args = ap.parse_args(argv)
     logging.getLogger("osxphotos").setLevel(logging.ERROR)
 
@@ -290,9 +461,27 @@ def main(argv: list[str] | None = None) -> None:
                   f"({sum(i['edited'] for i in new):,} of those edited).")
         return
 
+    if args.finish:
+        try:
+            summary = finish(src, dst, json.loads(args.finish.read_text()), emit)
+        except KeyboardInterrupt:
+            emit("cancelled")
+            sys.exit(130)
+        except Exception as e:  # noqa: BLE001
+            fail(str(e))
+        if not args.json:
+            print(f"\nImported {summary['imported']:,}, {len(summary['failed']):,} problems.")
+        return
+
     if not args.uuids_file:
         fail("give --plan, or --uuids-file with the photos to import.")
     uuids = [u.strip() for u in args.uuids_file.read_text().splitlines() if u.strip()]
+    if args.parts:
+        try:
+            print(json.dumps(manifest(src, uuids)), flush=True)
+        except Exception as e:  # noqa: BLE001
+            fail(f"couldn’t read “{src.stem}”: {e}")
+        return
     if not args.json and not args.yes:
         if input(f"Photos will quit and reopen with “{dst.stem}” to import {len(uuids):,} "
                  "photos. Continue? [y/N] ").strip().lower() not in ("y", "yes"):

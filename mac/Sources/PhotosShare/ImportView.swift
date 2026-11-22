@@ -74,6 +74,7 @@ struct ImportView: View {
             note(message, symbol: "exclamationmark.triangle")
         case .ready:
             VStack(spacing: 0) {
+                editsStatus
                 filters
                 grid
                 Divider()
@@ -84,6 +85,28 @@ struct ImportView: View {
         case .done:
             result
         }
+    }
+
+    /// Whether edits will arrive editable, and how to make them if not.
+    @ViewBuilder private var editsStatus: some View {
+        let dest = model.plan?.dest_name ?? ""
+        Group {
+            if model.keepsEdits {
+                Label("Edits stay editable: “\(dest)” is the System Photo Library.", systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(.green)
+            } else {
+                Label {
+                    Text("Edited photos can’t keep their edits, because “\(dest)” isn’t the System Photo Library. To keep them, open “\(dest)” in Photos, choose Photos → Settings → General → Use as System Photo Library, then click Reload.")
+                } icon: {
+                    Image(systemName: "info.circle.fill")
+                }
+                .foregroundStyle(.orange)
+            }
+        }
+        .font(.callout)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24).padding(.top, 12)
     }
 
     private var filters: some View {
@@ -143,7 +166,7 @@ struct ImportView: View {
             Button("Select All") { model.selectVisible() }
             Button("Select None") { model.deselectVisible() }
             Spacer()
-            if model.selectedEdited > 0 {
+            if model.selectedEdited > 0 && !model.keepsEdits {
                 Picker("\(model.selectedEdited) edited:", selection: $model.editedMode) {
                     ForEach(EditedMode.allCases) { Text($0.title).tag($0) }
                 }
@@ -153,16 +176,12 @@ struct ImportView: View {
             Button {
                 confirming = true
             } label: {
-                Label("Import \(importCount) Photos", systemImage: "square.and.arrow.down")
+                Label("Import \(model.importCount) Photos", systemImage: "square.and.arrow.down")
             }
             .buttonStyle(.borderedProminent).controlSize(.large)
-            .disabled(importCount == 0)
+            .disabled(model.importCount == 0)
         }
         .padding(.horizontal, 24).padding(.vertical, 14)
-    }
-
-    private var importCount: Int {
-        model.editedMode == .skip ? model.selection.count - model.selectedEdited : model.selection.count
     }
 
     private var progress: some View {
@@ -170,7 +189,9 @@ struct ImportView: View {
             ProgressView(value: Double(model.done), total: Double(max(model.total, 1)))
                 .frame(width: 380)
             Text("\(model.phase)… \(model.done) of \(model.total)").font(.headline)
-            Text("Photos is adding them to “\(model.plan?.dest_name ?? "")”. Photos already added stay if you cancel.")
+            Text(model.keepsEdits
+                 ? "Adding them to “\(model.plan?.dest_name ?? "")” with their edits. Photos already added stay if you cancel."
+                 : "Photos is adding them to “\(model.plan?.dest_name ?? "")”. Photos already added stay if you cancel.")
                 .foregroundStyle(.secondary)
             Button("Cancel", role: .cancel) { model.cancel() }
         }
@@ -187,7 +208,7 @@ struct ImportView: View {
                 if let skipped = s?.skipped_edited, !skipped.isEmpty {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("To keep their edits editable, bring these across with Photos’ own File → Import (choose “\(model.plan?.source_name ?? "")”). Only these need it.")
+                            Text("To bring these across with their edits still editable, make “\(model.plan?.dest_name ?? "")” the System Photo Library (Photos → Settings → General), then import them again here.")
                                 .foregroundStyle(.secondary)
                             Text(skipped.compactMap(\.name).joined(separator: ", "))
                                 .font(.caption.monospaced()).textSelection(.enabled)
@@ -231,11 +252,15 @@ struct ImportView: View {
     // MARK: - Helpers
 
     private var confirmTitle: String {
-        "Import \(importCount) photos into “\(model.plan?.dest_name ?? "")”?"
+        "Import \(model.importCount) photos into “\(model.plan?.dest_name ?? "")”?"
     }
 
     private var confirmMessage: String {
-        var text = "Photos will quit and reopen with “\(model.plan?.dest_name ?? "")”, then add the photos in batches. Nothing is removed from “\(model.plan?.source_name ?? "")”."
+        let dest = model.plan?.dest_name ?? "", src = model.plan?.source_name ?? ""
+        if model.keepsEdits {
+            return "They’re added straight to “\(dest)” with their edits (still editable), Live Photos, favourites, dates, places and albums. If any have titles, captions or keywords, Photos opens at the end to add those. Nothing is removed from “\(src)”."
+        }
+        var text = "Photos will quit and reopen with “\(dest)”, then add the photos in batches. Nothing is removed from “\(src)”."
         if model.selectedEdited > 0 {
             text += "\n\n\(model.selectedEdited) edited: \(model.editedMode.title.lowercased()). \(model.editedMode.detail)"
         }

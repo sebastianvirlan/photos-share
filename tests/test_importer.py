@@ -200,3 +200,139 @@ def test_cli_plan_json(monkeypatch, tmp_path, capsys):
     with pytest.raises(SystemExit):
         importer.main([str(s), str(s), "--plan", "--json"])
     assert "same library" in json.loads(capsys.readouterr().out)["message"]
+
+
+# ---- keeping edits: parts, checks, finishing ----------------------------------------------
+
+@pytest.fixture
+def lib(tmp_path):
+    root = tmp_path / "S.photoslibrary"
+    (root / "resources" / "renders" / "A").mkdir(parents=True)
+    return root
+
+
+def files_photo(lib, uuid="A1", edited=False, live=False, movie=False, render_ext=None, **kw):
+    """A fake photo whose files exist on disk, like a real library."""
+    def make(name):
+        f = lib / "originals" / name
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(b"x" * 10)
+        return str(f)
+    p = photo(uuid, edited_ops=["Crop"] if edited else None, ismovie=movie,
+              path=make(f"{uuid}.{'mov' if movie else 'heic'}"),
+              live_photo=live, path_live_photo=make(f"{uuid}_live.mov") if live else None,
+              path_edited=None, path_edited_live_photo=None, adjustments_path=None,
+              _db=types.SimpleNamespace(library_path=str(lib)), **kw)
+    if edited:
+        p.adjustments_path = Path(make(f"{uuid}.plist"))  # osxphotos gives a Path here
+        render = lib / "resources" / "renders" / uuid[0] / f"{uuid}_{'2_0' if movie else '1_201'}_a.{render_ext or ('mov' if movie else 'heic')}"
+        render.write_bytes(b"e")
+        if live:
+            (lib / "resources" / "renders" / uuid[0] / f"{uuid}_2_100_a.mov").write_bytes(b"l")
+    return p
+
+
+def test_parts_unedited_and_live(lib):
+    files, why = importer.parts(files_photo(lib, live=True))
+    assert why is None and [f["type"] for f in files] == ["photo", "pairedVideo"]
+
+
+def test_parts_edited_live_finds_renders_osxphotos_misses(lib):
+    # HEIC original whose edit Photos saved as JPEG: osxphotos' path_edited is None
+    p = files_photo(lib, edited=True, live=True, render_ext="jpeg")
+    files, why = importer.parts(p)
+    assert why is None
+    assert [f["type"] for f in files] == ["photo", "pairedVideo", "adjustmentData",
+                                          "fullSizePhoto", "fullSizePairedVideo"]
+    assert files[3]["path"].endswith("_1_201_a.jpeg")
+    assert files[4].get("optional") is True
+    assert all(isinstance(f["path"], str) for f in files)  # JSON-safe
+
+
+def test_parts_edited_video(lib):
+    files, _ = importer.parts(files_photo(lib, edited=True, movie=True))
+    assert [f["type"] for f in files] == ["video", "adjustmentData", "fullSizeVideo"]
+
+
+def test_parts_reasons(lib):
+    p = files_photo(lib, edited=True)
+    for f in (lib / "resources" / "renders" / "A").iterdir():
+        f.unlink()
+    assert importer.parts(p) == ([], "Photos hasn’t saved its edited version (open it in Edit and click Done)")
+    p.path = "/missing.heic"
+    assert importer.parts(p)[1] == "the original file isn’t in the library"
+
+
+def test_manifest(monkeypatch, lib):
+    ok = files_photo(lib, "A1", favorite=True, albums=["Trip", None], location=(1.0, 2.0))
+    broken = files_photo(lib, "A2", edited=True)
+    for f in (lib / "resources" / "renders" / "A").iterdir():
+        f.unlink()
+    monkeypatch.setattr(importer, "_photos", lambda p: [ok, broken, files_photo(lib, "A3")])
+    out = importer.manifest(lib, ["A1", "A2"])
+    assert [i["source_uuid"] for i in out["items"]] == ["A1"]
+    item = out["items"][0]
+    assert (item["favorite"], item["albums"], item["lat"], item["lon"]) == (True, ["Trip"], 1.0, 2.0)
+    assert [p["uuid"] for p in out["problems"]] == ["A2"]
+    json.dumps(out)
+
+
+def test_compare(lib):
+    s = files_photo(lib, "A1", edited=True, live=True)
+    same = types.SimpleNamespace(**{**s.__dict__})
+    assert importer.compare(s, same) == []
+    lost = types.SimpleNamespace(**{**s.__dict__, "hasadjustments": False, "live_photo": False})
+    assert importer.compare(s, lost) == ["Live Photo video", "the edit"]
+
+
+def test_finish(monkeypatch, lib):
+    a = files_photo(lib, "A1", title="Beach", keywords=["sea"])
+    b = files_photo(lib, "A2", edited=True)
+    made_a = types.SimpleNamespace(**{**a.__dict__, "uuid": "D1"})
+    made_b = types.SimpleNamespace(**{**b.__dict__, "uuid": "D2", "hasadjustments": False})
+    monkeypatch.setattr(importer, "_photos",
+                        lambda p: [a, b] if p.name == "S.photoslibrary" else [made_a, made_b])
+    monkeypatch.setattr(importer, "_wait_for_library", lambda p: None)
+    set_on = {}
+
+    class Photo:
+        def __init__(self, uuid):
+            self.uuid = uuid
+
+        def __setattr__(self, k, v):
+            set_on.setdefault(self.__dict__.get("uuid"), {})[k] = v
+            object.__setattr__(self, k, v)
+
+    opened = []
+    monkeypatch.setitem(sys.modules, "photoscript", types.SimpleNamespace(
+        Photo=Photo, PhotosLibrary=lambda: types.SimpleNamespace(open=opened.append)))
+    run = {"requested": 3,
+           "created": [{"source_uuid": "A1", "created": "D1/L0/001"},
+                       {"source_uuid": "A2", "created": "D2/L0/001"}],
+           "failed": [{"uuid": "A3", "name": "IMG_A3.HEIC", "reason": "Photos refused it"}]}
+    events = []
+    out = importer.finish(lib, lib.with_name("D.photoslibrary"), run,
+                          emit=lambda e, **d: events.append((e, d)))
+    assert out["imported"] == 2 and out["requested"] == 3
+    reasons = {f["uuid"]: f["reason"] for f in out["failed"]}
+    assert reasons == {"A3": "Photos refused it", "A2": "imported, but differs: the edit"}
+    assert set_on["D1"] == {"title": "Beach", "keywords": ["sea"]}
+    assert opened == [str(lib.with_name("D.photoslibrary"))]
+    assert events[-1][0] == "done"
+
+
+def test_finish_without_details_never_opens_photos(monkeypatch, lib):
+    a = files_photo(lib, "A1")
+    monkeypatch.setattr(importer, "_photos", lambda p: [a] if p.name == "S.photoslibrary"
+                        else [types.SimpleNamespace(**{**a.__dict__, "uuid": "D1"})])
+    monkeypatch.setitem(sys.modules, "photoscript", None)  # importing it would fail
+    out = importer.finish(lib, lib.with_name("D.photoslibrary"),
+                          {"created": [{"source_uuid": "A1", "created": "D1/L0/001"}]})
+    assert out["failed"] == [] and out["imported"] == 1
+
+
+def test_plan_says_whether_dest_is_system(monkeypatch, tmp_path):
+    from photos_share import dedupe
+    monkeypatch.setattr(dedupe, "system_library", lambda: (tmp_path / "D.photoslibrary").resolve())
+    assert importer.Plan(tmp_path / "S.photoslibrary", tmp_path / "D.photoslibrary").to_json()["dest_is_system"]
+    assert not importer.Plan(tmp_path / "D.photoslibrary", tmp_path / "S.photoslibrary").to_json()["dest_is_system"]

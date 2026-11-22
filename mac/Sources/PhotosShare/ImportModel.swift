@@ -24,6 +24,7 @@ struct ImportPlan: Codable {
     let dest_name: String
     let albums: [String]
     let items: [ImportItem]
+    var dest_is_system: Bool? = nil
 }
 
 struct ImportSummary: Codable {
@@ -47,7 +48,7 @@ enum EditedMode: String, CaseIterable, Identifiable {
     }
     var detail: String {
         switch self {
-        case .skip: "Nothing is lost: bring them across afterwards with Photos’ own import, which keeps edits editable."
+        case .skip: "Nothing is lost: import them later with the destination set as the System Photo Library, to keep their edits."
         case .flatten: "The edit is baked into the photo and can’t be reverted in the destination."
         case .both: "The edited look and the untouched original arrive as two separate photos."
         }
@@ -84,6 +85,15 @@ final class ImportModel {
     private(set) var total = 0
     private(set) var summary: ImportSummary?
     private var process: Process?
+    private var cancelled = false
+
+    /// Edits can be kept only when the destination is the System Photo Library (PhotoKit).
+    var keepsEdits: Bool { plan?.dest_is_system == true }
+
+    /// How many of the selection will be imported.
+    var importCount: Int {
+        keepsEdits || editedMode != .skip ? selection.count : selection.count - selectedEdited
+    }
 
     var canLoad: Bool {
         guard let source, let dest, source != dest else { return false }
@@ -141,20 +151,35 @@ final class ImportModel {
     func deselectVisible() { selection.subtract(visible.map(\.uuid)) }
 
     func start() {
-        guard let source, let dest, !selection.isEmpty else { return }
-        let list = FileManager.default.temporaryDirectory
-            .appendingPathComponent("photos-import-\(UUID().uuidString).txt")
-        do {
-            try selection.joined(separator: "\n").write(to: list, atomically: true, encoding: .utf8)
-        } catch {
-            state = .failed("Couldn’t prepare the import: \(error.localizedDescription)")
-            return
-        }
+        guard source != nil, dest != nil, !selection.isEmpty else { return }
+        cancelled = false
         state = .importing
         phase = "Starting"
         done = 0
         total = selection.count
         summary = nil
+        if keepsEdits {
+            Task { await importKeepingEdits() }
+        } else {
+            importThroughPhotos()
+        }
+    }
+
+    private func writeSelection() throws -> URL {
+        let list = FileManager.default.temporaryDirectory
+            .appendingPathComponent("photos-import-\(UUID().uuidString).txt")
+        try selection.joined(separator: "\n").write(to: list, atomically: true, encoding: .utf8)
+        return list
+    }
+
+    /// Photos' scripting import: edit recipes are ignored, so edited photos are skipped or flattened.
+    private func importThroughPhotos() {
+        guard let source, let dest else { return }
+        let list: URL
+        do { list = try writeSelection() } catch {
+            state = .failed("Couldn’t prepare the import: \(error.localizedDescription)")
+            return
+        }
         do {
             process = try Tools.stream(
                 "photos-import",
@@ -169,7 +194,60 @@ final class ImportModel {
         }
     }
 
-    func cancel() { process?.interrupt() }
+    /// Creates the photos ourselves (PhotoKit) with all their parts, so edits stay editable,
+    /// then lets photos-import check them and add titles, captions and keywords.
+    private func importKeepingEdits() async {
+        guard let source, let dest else { return }
+        do {
+            phase = "Preparing"
+            let list = try writeSelection()
+            defer { try? FileManager.default.removeItem(at: list) }
+            let (code, out, err) = try await Tools.run("photos-import", [source.path, dest.path, "--parts", "--uuids-file", list.path, "--json"])
+            if let obj = try? JSONSerialization.jsonObject(with: out) as? [String: Any],
+               obj["event"] as? String == "error" {
+                throw PhotoKitImport.Failure(obj["message"] as? String ?? "photos-import failed")
+            }
+            guard code == 0 else {
+                throw PhotoKitImport.Failure(err.split(separator: "\n").last.map(String.init) ?? "photos-import failed")
+            }
+            let manifest = try JSONDecoder().decode(PhotoKitImport.Manifest.self, from: out)
+            try await PhotoKitImport.authorize()
+
+            var run = PhotoKitImport.Run(requested: selection.count, failed: manifest.problems)
+            let albums = try await PhotoKitImport.albums(named: Set(manifest.items.flatMap(\.albums)))
+            phase = "Importing"
+            done = manifest.problems.count
+            var rest = manifest.items[...]
+            while !rest.isEmpty && !cancelled {
+                let batch = Array(rest.prefix(PhotoKitImport.batchSize))
+                rest = rest.dropFirst(batch.count)
+                await PhotoKitImport.create(batch, albums: albums, into: &run)
+                done += batch.count
+            }
+            if cancelled {
+                run.requested = run.created.count + run.failed.count
+            }
+
+            let runFile = FileManager.default.temporaryDirectory
+                .appendingPathComponent("photos-import-run-\(UUID().uuidString).json")
+            try JSONEncoder().encode(run).write(to: runFile)
+            phase = "Checking"
+            process = try Tools.stream(
+                "photos-import", [source.path, dest.path, "--finish", runFile.path, "--json"],
+                onLine: { [weak self] line in self?.handle(line) },
+                onExit: { [weak self] code, stderr in
+                    try? FileManager.default.removeItem(at: runFile)
+                    self?.finished(code, stderr)
+                })
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    func cancel() {
+        cancelled = true        // stops creating photos after the current batch
+        process?.interrupt()
+    }
 
     private func handle(_ line: String) {
         guard let data = line.data(using: .utf8),
@@ -181,8 +259,12 @@ final class ImportModel {
         case "progress":
             done = obj["done"] as? Int ?? done
             total = obj["total"] as? Int ?? total
-            phase = (obj["phase"] as? String) == "opening" ? "Opening the destination in Photos"
-                : "Importing"
+            switch obj["phase"] as? String {
+            case "opening": phase = "Opening the destination in Photos"
+            case "checking": phase = "Checking the imported photos"
+            case "details": phase = "Adding titles, captions and keywords in Photos"
+            default: phase = "Importing"
+            }
         case "done":
             summary = try? JSONDecoder().decode(ImportSummary.self, from: data)
             state = .done

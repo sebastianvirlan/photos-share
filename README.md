@@ -22,12 +22,17 @@ The app lives in the menu bar and has two windows:
   - Pick the two libraries and see the source as a grid. Photos already in the destination
     are left out.
   - Filter by album, year, photos or videos, and favourites, then select.
-  - Photos imports them in batches in the background, without its duplicate prompts.
-  - Favourites, titles, captions, keywords, location, adjusted dates and album membership are
-    carried over, and Live Photo and RAW+JPEG pairs stay together.
-  - Edits made in Photos can't come across editable (Photos ignores `.AAE` recipes, and they
-    break previews). Choose whether to skip edited photos (the default; bring those few
-    across with Photos' own import), import them as they look now, or import both versions.
+  - **When the destination is the System Photo Library** (Photos → Settings → General), edits
+    stay editable: the app creates each photo itself from all its parts (original, Live
+    video, Photos' edit recipe, edited versions), so crops, adjustments, styles, Clean Up,
+    portrait depth and video trims can still be changed or reverted. Each imported photo is
+    then checked against its source, and titles, captions and keywords are added through
+    Photos (it opens briefly, only if any photo has them).
+  - Otherwise Photos imports them in batches, without its duplicate prompts. Photos ignores
+    edit recipes that way, so choose whether to skip edited photos (the default), import them
+    as they look now, or import both versions.
+  - Favourites, location, adjusted dates, album membership, Live Photos and RAW+JPEG pairs
+    come across either way.
   - Afterwards, **Open Clean Up** checks what arrived.
 - **Clean Up After Import:** pick the two libraries, see the three groups as thumbnails,
   compare any photo side by side, then **Move to Trash**, **Delete N Photos** (when the source
