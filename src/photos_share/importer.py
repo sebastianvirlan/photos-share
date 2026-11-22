@@ -309,15 +309,19 @@ def parts(p) -> tuple[list[dict], str | None]:
         r.append({"type": "pairedVideo", "path": p.path_live_photo})
     if p.hasadjustments:
         recipe, image = p.adjustments_path, edited_image(p)
-        if _exists(recipe) and image:
+        has_recipe = _exists(recipe)
+        if has_recipe and image:
             r.append({"type": "adjustmentData", "path": recipe})
             r.append({"type": "fullSizeVideo" if p.ismovie else "fullSizePhoto", "path": image})
             if p.live_photo and (v := edited_live_video(p)):
                 r.append({"type": "fullSizePairedVideo", "path": v, "optional": True})
-        elif image:  # no recipe: keep the look, as an uneditable edit isn't possible here
-            return [], "its edit can’t be read (no edit recipe)"
         else:
-            return [], "Photos hasn’t saved its edited version (open it in Edit and click Done)"
+            kind = "video" if p.ismovie else "photo"
+            gone = [w for w, lost in (("its edit recipe", not has_recipe),
+                                      (f"the edited {kind} file", not image)) if lost]
+            verb = "aren’t" if len(gone) > 1 else "isn’t"
+            hint = " (open it in Edit and click Done, so Photos saves it)" if has_recipe else ""
+            return [], f"it’s edited, but {' and '.join(gone)} {verb} in the library{hint}"
     return [{**x, "path": str(x["path"])} for x in r], None
 
 

@@ -260,7 +260,11 @@ def test_parts_reasons(lib):
     p = files_photo(lib, edited=True)
     for f in (lib / "resources" / "renders" / "A").iterdir():
         f.unlink()
-    assert importer.parts(p) == ([], "Photos hasn’t saved its edited version (open it in Edit and click Done)")
+    assert importer.parts(p) == ([], "it’s edited, but the edited photo file isn’t in the library "
+                                     "(open it in Edit and click Done, so Photos saves it)")
+    Path(p.adjustments_path).unlink()
+    assert importer.parts(p) == ([], "it’s edited, but its edit recipe and the edited photo file "
+                                     "aren’t in the library")
     p.path = "/missing.heic"
     assert importer.parts(p)[1] == "the original file isn’t in the library"
 
