@@ -39,6 +39,11 @@ const fmtMonth = d => fmt(d, { month: "long", year: "numeric" });
 const fmtDay = d => fmt(d, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 const n = x => x.toLocaleString();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function api(url) {
+  const res = await fetch(url);
+  if (res.status === 401) { location.href = "/login"; await new Promise(() => {}); }
+  return res;
+}
 
 function groupBy(list, key) {
   const out = [];
@@ -80,7 +85,7 @@ async function route() {
 
 async function renderHome() {
   document.title = "Photos";
-  const libs = await (await fetch("/api/libraries")).json();
+  const libs = await (await api("/api/libraries")).json();
   libCount = libs.length;
   if (libs.length === 1) return location.replace(`#/l/${libs[0].id}`);
   app.replaceChildren(
@@ -102,9 +107,9 @@ async function renderHome() {
 // ---------------------------------------------------------------- library
 
 async function loadLibrary(id) {
-  if (!libCount) libCount = (await (await fetch("/api/libraries")).json()).length;
+  if (!libCount) libCount = (await (await api("/api/libraries")).json()).length;
   for (let shown = ""; ; ) {
-    const res = await fetch(`/api/libraries/${id}`);
+    const res = await api(`/api/libraries/${id}`);
     if (parseHash()?.id !== id) return false;
     if (res.status === 404) { location.replace("#/"); return false; }
     const data = await res.json();
@@ -296,7 +301,7 @@ async function showVideo(a, poster) {
   stage.replaceChildren(h("img", { src: poster, alt: "" }));
   for (let shown = false; viewing === a.u; ) {
     let state = "error";
-    try { ({ state } = await (await fetch(`/video-status/${lib.id}/${a.u}`)).json()); } catch {}
+    try { ({ state } = await (await api(`/video-status/${lib.id}/${a.u}`)).json()); } catch {}
     if (viewing !== a.u) return;
     if (state === "ready") {
       stage.replaceChildren(h("video", { src: `/video/${lib.id}/${a.u}`, poster, controls: true,

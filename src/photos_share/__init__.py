@@ -1,15 +1,20 @@
 import argparse
+import getpass
 import ipaddress
 import json
 import logging
+import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
 from pathlib import Path
 
 TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
-TAILSCALE_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+TAILSCALE_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+PASSWORD_ENV = "PHOTOS_SHARE_PASSWORD"
+MIN_FUNNEL_PASSWORD = 8
 
 
 def main() -> None:
@@ -27,20 +32,39 @@ def main() -> None:
                              "convert: 1080p H.264 via avconvert (plays everywhere, slower start)")
     parser.add_argument("--downloads", action="store_true",
                         help="let viewers download original files (off by default)")
+    parser.add_argument("--password", action="store_true",
+                        help=f"require a password (asked for at start, or read from ${PASSWORD_ENV})")
     net = parser.add_mutually_exclusive_group()
     net.add_argument("--tailscale", action="store_true",
-                     help="listen on this Mac's Tailscale address only")
+                     help="listen on this Mac's Tailscale address only (viewers need Tailscale)")
+    net.add_argument("--funnel", action="store_true",
+                     help="publish a public https link with Tailscale Funnel (no app needed for "
+                          "viewers; requires a password)")
     net.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    for noisy in ("osxphotos",):
-        logging.getLogger(noisy).setLevel(logging.ERROR)
+    logging.getLogger("osxphotos").setLevel(logging.ERROR)
 
+    from .auth import Auth
     from .library import Collection, Options
     from .server import create_app
 
+    # ---- password ----------------------------------------------------------
+    password = os.environ.get(PASSWORD_ENV) if (args.password or args.funnel) else None
+    if (args.password or args.funnel) and not password:
+        if not sys.stdin.isatty():
+            sys.exit(f"Error: a password is required; set ${PASSWORD_ENV}.")
+        password = getpass.getpass("Choose a password for viewers: ")
+        if password != getpass.getpass("Repeat it: "):
+            sys.exit("Error: passwords don't match.")
+    if args.funnel and len(password or "") < MIN_FUNNEL_PASSWORD:
+        sys.exit(f"Error: --funnel makes the link public; use a password of at least "
+                 f"{MIN_FUNNEL_PASSWORD} characters.")
+    auth = Auth(password, secure_cookie=args.funnel) if password else None
+
+    # ---- libraries ---------------------------------------------------------
     try:
         col = Collection(args.path, Options(show_screenshots=args.screenshots), args.only)
     except ValueError as e:
@@ -56,22 +80,55 @@ def main() -> None:
           f"({ready} already indexed; others index on first open)")
     print(f"Screenshots: {'shown' if args.screenshots else 'hidden'} · "
           f"Video: {args.video} · Downloads: {'on' if args.downloads else 'off'} · "
-          "Hidden & deleted photos: excluded")
+          f"Password: {'on' if auth else 'off'} · Hidden & deleted photos: excluded")
 
-    host, url_host = args.host, args.host
+    # ---- network -----------------------------------------------------------
+    host, url = args.host, f"http://{args.host}:{args.port}"
+    funnel = None
     if args.tailscale:
         host = _tailscale_ip() or sys.exit(
             "Error: no Tailscale address found. Is Tailscale installed and connected?")
-        url_host = _tailscale_name() or host
+        url = f"http://{_tailscale_name() or host}:{args.port}"
+    elif args.funnel:
+        cli = _tailscale_cli() or sys.exit(
+            "Error: Tailscale command-line tool not found. Install the Tailscale app, or "
+            "`brew install tailscale`.")
+        name = _tailscale_name() or sys.exit(
+            "Error: couldn't get this Mac's Tailscale name. Is Tailscale connected?")
+        host, url = "127.0.0.1", f"https://{name}"
+        # Foreground mode: the public link exists only while this process runs.
+        funnel = subprocess.Popen([cli, "funnel", str(args.port)],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        try:
+            err = funnel.communicate(timeout=3)[1]
+            sys.exit("Error: Tailscale Funnel didn't start:\n" + (err or "").strip() +
+                     "\nIf it mentions enabling Funnel, open that link once, then try again.")
+        except subprocess.TimeoutExpired:
+            pass  # still running: good
+        print("\n⚠ PUBLIC link: anyone who has it reaches the password page.")
     elif host == "0.0.0.0":
-        url_host = socket.gethostname().split(".")[0]
+        url = f"http://{socket.gethostname().split('.')[0]}:{args.port}"
         print("Warning: listening on all networks, including local Wi-Fi.")
+    if host not in ("127.0.0.1", "localhost") and not auth and not args.tailscale:
+        print("Warning: no password set (--password).")
 
-    print(f"\nSharing at: http://{url_host}:{args.port}\nPress Ctrl+C to stop sharing.",
-          flush=True)
+    print(f"\nSharing at: {url}\nPress Ctrl+C to stop sharing.", flush=True)
 
     import uvicorn
-    uvicorn.run(create_app(col, args.video, args.downloads), host=host, port=args.port, log_level="warning")
+    try:
+        uvicorn.run(create_app(col, args.video, args.downloads, auth), host=host,
+                    port=args.port, log_level="warning")
+    finally:
+        if funnel and funnel.poll() is None:
+            funnel.terminate()
+            print("Public link closed.")
+
+
+def _tailscale_cli() -> str | None:
+    found = shutil.which("tailscale")
+    if found:
+        return found
+    return TAILSCALE_APP_CLI if Path(TAILSCALE_APP_CLI).exists() else None
 
 
 def _tailscale_ip() -> str | None:
@@ -83,12 +140,13 @@ def _tailscale_ip() -> str | None:
 
 
 def _tailscale_name() -> str | None:
-    for cli in ("tailscale", TAILSCALE_CLI):
-        try:
-            out = subprocess.run([cli, "status", "--json"], capture_output=True, text=True,
-                                 timeout=5).stdout
-            # Full MagicDNS name: the short form doesn't resolve for people you share with.
-            return json.loads(out)["Self"]["DNSName"].rstrip(".") or None
-        except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
-            continue
-    return None
+    cli = _tailscale_cli()
+    if not cli:
+        return None
+    try:
+        out = subprocess.run([cli, "status", "--json"], capture_output=True, text=True,
+                             timeout=5).stdout
+        # Full MagicDNS name: the short form doesn't resolve for people you share with.
+        return json.loads(out)["Self"]["DNSName"].rstrip(".") or None
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        return None

@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from urllib.parse import parse_qs
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import media
+from .auth import COOKIE, COOKIE_DAYS, Auth, login_page
 from .library import Asset, Collection, Library
 
 STATIC = Path(__file__).parent / "static"
 IMG_CACHE = {"Cache-Control": "private, max-age=604800"}
 
 
-def create_app(col: Collection, video_mode: str, downloads: bool = False) -> FastAPI:
+def create_app(col: Collection, video_mode: str, downloads: bool = False,
+               auth: Auth | None = None) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     converter = media.VideoConverter() if video_mode == "convert" else None
 
@@ -38,6 +42,41 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False) -> Fas
         if request.url.path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-cache"  # pick up app updates on reload
         return response
+
+    if auth is not None:
+        @app.middleware("http")
+        async def require_login(request: Request, call_next):
+            # Registered last, so it runs first: nothing is served without a valid session.
+            if request.url.path in ("/login", "/logout") or auth.is_authed(
+                    request.cookies.get(COOKIE)):
+                return await call_next(request)
+            if request.url.path == "/":
+                return RedirectResponse("/login", status_code=303)
+            return JSONResponse({"error": "login required"}, status_code=401)
+
+        @app.get("/login")
+        def login_form():
+            return HTMLResponse(login_page())
+
+        @app.post("/login")
+        async def login(request: Request):
+            if auth.locked_out():
+                return HTMLResponse(login_page("Too many attempts. Try again in a few minutes."),
+                                    status_code=429)
+            form = parse_qs((await request.body()).decode(errors="replace"))
+            if not auth.check(form.get("password", [""])[0]):
+                await asyncio.sleep(1)  # slow down guessing
+                return HTMLResponse(login_page("Wrong password."), status_code=401)
+            resp = RedirectResponse("/", status_code=303)
+            resp.set_cookie(COOKIE, auth.token, max_age=COOKIE_DAYS * 86400, httponly=True,
+                            samesite="lax", secure=auth.secure_cookie)
+            return resp
+
+        @app.get("/logout")
+        def logout():
+            resp = RedirectResponse("/login", status_code=303)
+            resp.delete_cookie(COOKIE)
+            return resp
 
     @app.get("/api/libraries")
     def libraries():
