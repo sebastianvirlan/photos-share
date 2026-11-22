@@ -17,6 +17,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import osxphotos
@@ -74,12 +75,24 @@ def main() -> None:
 
     manifest = Path(tempfile.mkdtemp(prefix="edit-spike-")) / "manifest.json"
     manifest.write_text(json.dumps(entries))
-    print("Running Photos Share… allow Photos access, and confirm the edits if macOS asks.")
-    subprocess.run(["open", "-n", "-W", "-a", str(args.app), "--args", "--apply-edits", str(manifest)],
-                   check=True)
     log = manifest.with_suffix(".json.log")
-    print(log.read_text() if log.exists() else f"No log written ({log}).")
-
+    print("Running Photos Share. It comes to the front: allow Photos access, and allow the edits "
+          "if macOS asks (check behind other windows too).\n")
+    proc = subprocess.Popen(["open", "-n", "-W", "-a", str(args.app), "--args", "--apply-edits",
+                             str(manifest)])
+    shown = 0
+    while True:
+        finished = proc.poll() is not None
+        lines = log.read_text().splitlines() if log.exists() else []
+        for line in lines[shown:]:
+            if line != "DONE":
+                print(line, flush=True)
+        shown = len(lines)
+        if finished or "DONE" in lines:
+            break
+        time.sleep(0.5)
+    if not lines:
+        print(f"The app didn’t start the spike (no log at {log}). Is {args.app} the new build?")
 
 if __name__ == "__main__":
     main()

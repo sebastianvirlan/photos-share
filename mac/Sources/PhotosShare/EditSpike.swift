@@ -26,17 +26,26 @@ enum EditSpike {
 
     static func run(_ manifest: URL) async {
         let logURL = manifest.appendingPathExtension("log")
-        var log = ""
-        func say(_ s: String) { log += s + "\n"; print(s) }
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        let logFile = try? FileHandle(forWritingTo: logURL)
+        func say(_ s: String) {  // written line by line, so the script can show progress
+            logFile?.write(Data((s + "\n").utf8))
+            try? logFile?.synchronize()
+        }
         defer {
-            try? log.write(to: logURL, atomically: true, encoding: .utf8)
+            say("DONE")
+            try? logFile?.close()
             exit(0)
         }
+        // A menu bar app's permission prompts can open behind other windows: come forward.
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
 
         guard let raw = try? Data(contentsOf: manifest),
               let entries = try? JSONDecoder().decode([Entry].self, from: raw) else {
             return say("Couldn’t read \(manifest.path)")
         }
+        say("Asking for access to Photos (current: \(PHPhotoLibrary.authorizationStatus(for: .readWrite).rawValue))…")
         guard await PHPhotoLibrary.requestAuthorization(for: .readWrite) == .authorized else {
             return say("Photos access wasn’t granted (System Settings → Privacy & Security → Photos).")
         }
@@ -49,6 +58,7 @@ enum EditSpike {
             }
         }
 
+        say("Read \(all.count) photos in the System Photo Library.")
         for e in entries {
             let candidates = (byName[e.name.lowercased()] ?? []).filter { a in
                 guard let d = a.creationDate?.timeIntervalSince1970 else { return false }
@@ -60,6 +70,8 @@ enum EditSpike {
             }
             for a in candidates {
                 do {
+                    say("… \(e.name): saving the edit (macOS may ask you to allow it)")
+                    NSApp.activate(ignoringOtherApps: true)
                     try await apply(e, to: a)
                     say("✓ \(e.name): edit saved (\(e.format_id) \(e.format_version))")
                 } catch {
