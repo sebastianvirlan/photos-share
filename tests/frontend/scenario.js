@@ -62,6 +62,16 @@ const go = async h => { location.hash = h; await tick(); };
     check("viewer steps within the album", location.hash.endsWith("/p/U2"), location.hash);
     els["#v-close"].onclick();
     await tick();
+
+    await checkForUpdates();
+    const pill = document.body.children.find(c => c.attrs?.class === "update");
+    check("new photos pill appears when the server has a newer index", !!pill);
+    await checkForUpdates();
+    check("pill is not duplicated",
+      document.body.children.filter(c => c.attrs?.class === "update").length === 1);
+    pill.listeners.click();
+    await tick();
+    check("pill reloads the library", lib && lib.id === "abc" && updateBtn === null);
   } catch (e) {
     errors.push(String(e) + "\n" + e.stack);
   }

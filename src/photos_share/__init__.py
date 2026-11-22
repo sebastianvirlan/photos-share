@@ -33,6 +33,8 @@ def main() -> None:
                           "viewers; requires a password)")
     net.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--refresh", type=float, default=60, metavar="SECONDS",
+                        help="how often to check for photos added in Photos (default 60; 0 = off)")
     parser.add_argument("--no-keep-awake", dest="keep_awake", action="store_false",
                         help="let the Mac sleep while sharing (by default it's kept awake)")
     args = parser.parse_args()
@@ -55,7 +57,8 @@ def main() -> None:
     mode = "tailscale" if args.tailscale else "funnel" if args.funnel else "local"
     cfg = ShareConfig(path=args.path, only=args.only or [], screenshots=args.screenshots,
                       video=args.video, downloads=args.downloads, password=password,
-                      mode=mode, host=args.host, port=args.port, keep_awake=args.keep_awake)
+                      mode=mode, host=args.host, port=args.port, keep_awake=args.keep_awake,
+                      refresh=args.refresh)
     try:
         share = Share(cfg)
     except ShareError as e:
@@ -79,10 +82,12 @@ def main() -> None:
     except ShareError as e:
         sys.exit(f"Error: {e}")
     share.start_keep_awake()
+    share.start_watching()
     print(f"\nSharing at: {share.url}\nPress Ctrl+C to stop sharing.", flush=True)
     try:
         share.server().run()  # blocks; handles Ctrl+C
     finally:
+        share.stop_watching()
         share.stop_keep_awake()
         if mode == "funnel":
             share.stop_funnel()

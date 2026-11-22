@@ -34,6 +34,7 @@ class ShareConfig:
     host: str = "127.0.0.1"     # used in local mode only
     port: int = 8080
     keep_awake: bool = True     # stop the Mac idle-sleeping while sharing
+    refresh: float = 60         # seconds between library change checks; 0 = never
 
 
 class Share:
@@ -64,6 +65,7 @@ class Share:
         self._thread: threading.Thread | None = None
         self._funnel: subprocess.Popen | None = None
         self._caffeinate: subprocess.Popen | None = None
+        self._watch_stop: threading.Event | None = None
 
     # ---- network -----------------------------------------------------------
 
@@ -94,6 +96,16 @@ class Share:
         app = create_app(self.collection, self.cfg.video, self.cfg.downloads, self.auth)
         return uvicorn.Server(uvicorn.Config(app, host=self.host, port=self.cfg.port,
                                              log_level="warning"))
+
+    def start_watching(self) -> None:
+        """Pick up photos added in Photos while sharing (re-indexes changed libraries)."""
+        if self.cfg.refresh and self._watch_stop is None:
+            self._watch_stop = self.collection.watch(self.cfg.refresh)
+
+    def stop_watching(self) -> None:
+        if self._watch_stop:
+            self._watch_stop.set()
+        self._watch_stop = None
 
     def start_keep_awake(self) -> None:
         """Prevent idle sleep until stop_keep_awake() or until this process exits.
@@ -152,6 +164,7 @@ class Share:
             self.stop()
             raise
         self.start_keep_awake()
+        self.start_watching()
 
     def _run_server(self) -> None:
         try:
@@ -160,6 +173,7 @@ class Share:
             pass
 
     def stop(self) -> None:
+        self.stop_watching()
         self.stop_keep_awake()
         self.stop_funnel()
         if self._server:

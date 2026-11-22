@@ -83,7 +83,7 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
         out = []
         for lib in col.libraries.values():
             item = {"id": lib.id, "name": lib.name, "state": lib.state,
-                    "available": lib.available}
+                    "available": lib.available, "rev": lib.rev}
             if lib.state == "ready" and lib.assets:
                 item.update(count=len(lib.assets), cover=lib.assets[0].uuid,
                             first=lib.assets[-1].date, last=lib.assets[0].date)
@@ -103,7 +103,7 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
             return JSONResponse({"state": lib.state, "error": lib.error, "name": lib.name},
                                 status_code=code)
         return {
-            "id": lib.id, "name": lib.name, "state": "ready",
+            "id": lib.id, "name": lib.name, "state": "ready", "rev": lib.rev,
             "available": lib.available, "downloads": downloads,
             "assets": [_asset_json(a) for a in lib.assets],
             "albums": [{"title": al["title"], "uuids": al["uuids"]} for al in lib.albums],

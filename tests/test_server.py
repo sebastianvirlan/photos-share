@@ -14,6 +14,7 @@ def test_libraries_list(client):
     libs = {lib["name"]: lib for lib in client.get("/api/libraries").json()}
     assert libs["Fake"]["state"] == "ready" and libs["Fake"]["count"] == 4
     assert libs["Fake"]["cover"] == "P1" and libs["Fake"]["available"] is True
+    assert libs["Fake"]["rev"] == 1
     assert libs["Second"]["state"] == "closed"
 
 
@@ -30,7 +31,7 @@ def test_library_payload(client, fake_id):
                                  "count": 1}
     assert data["people"][1]["count"] == 0  # only appears on a hidden screenshot
     assert data["albums"] == [{"title": "Trip", "uuids": ["P1"]}]
-    assert data["downloads"] is False
+    assert data["downloads"] is False and data["rev"] == 1
 
 
 def test_unknown_library(client):

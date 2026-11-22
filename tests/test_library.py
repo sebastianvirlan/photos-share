@@ -94,3 +94,101 @@ def test_relative_paths_stay_inside_library(tmp_path):
     assert lib._relative(str(path / "originals" / "A" / "x.jpg")) == "originals/A/x.jpg"
     assert lib.abs("originals/A/does-not-exist.jpg") is None
     assert lib.abs(None) is None
+
+
+# ---- picking up changes made in Photos while sharing ---------------------------------
+
+def _wait(cond, timeout=5.0):
+    import time
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+@pytest.fixture
+def opened(libs_dir, monkeypatch):
+    """The Fake library loaded from cache, with osxphotos replaced by a stub index."""
+    from conftest import ALBUMS, ASSETS, PEOPLE, asset
+    lib = Library(libs_dir / "Fake.photoslibrary", Options())
+    assert lib.load_cached()
+    calls = []
+
+    def fake_build():
+        calls.append(1)
+        new = [dict(a) for a in ASSETS] + [asset("NEW", "2025-01-01T10:00:00+00:00",
+                                                 original="originals/P/P1.jpeg")]
+        new[0]["edited"] = "resources/renders/P/P2_edited.jpeg"  # P1 was edited in Photos
+        return {"fingerprint": lib._fingerprint(), "assets": new, "albums": ALBUMS,
+                "people": PEOPLE}
+
+    monkeypatch.setattr(lib, "_build_index", fake_build)
+    return lib, calls
+
+
+def _touch_db(lib):
+    db = lib.path / "database" / "Photos.sqlite"
+    db.write_bytes(db.read_bytes() + b"+")
+
+
+def test_no_refresh_when_unchanged(opened):
+    lib, calls = opened
+    assert not lib.refresh_if_changed() and not lib.refresh_if_changed()
+    assert calls == []
+
+
+def test_refresh_waits_for_change_to_settle_then_reindexes(opened):
+    lib, calls = opened
+    rev = lib.rev
+    for sub in ("thumb", "full"):  # cached previews of P1 from before the edit
+        (lib.cache_dir / sub).mkdir(parents=True, exist_ok=True)
+        (lib.cache_dir / sub / "P1.jpg").write_bytes(b"old")
+        (lib.cache_dir / sub / "P2.jpg").write_bytes(b"unchanged")
+    _touch_db(lib)
+    assert not lib.refresh_if_changed()      # first sighting: wait
+    _touch_db(lib)
+    assert not lib.refresh_if_changed()      # still changing: wait again
+    assert lib.refresh_if_changed()          # same as last check: re-index
+    assert _wait(lambda: lib.rev == rev + 1 and not lib._refreshing)
+    assert calls == [1]
+    assert lib.assets[0].uuid == "NEW"       # newest first
+    assert not (lib.cache_dir / "thumb" / "P1.jpg").exists()   # edited: preview dropped
+    assert not (lib.cache_dir / "full" / "P1.jpg").exists()
+    assert (lib.cache_dir / "thumb" / "P2.jpg").exists()       # untouched photo keeps it
+    assert not lib.refresh_if_changed()      # now up to date
+
+
+def test_failed_refresh_keeps_previous_index(opened, monkeypatch):
+    lib, _ = opened
+    before = [a.uuid for a in lib.assets]
+
+    def boom():
+        raise RuntimeError("database locked")
+
+    monkeypatch.setattr(lib, "_build_index", boom)
+    _touch_db(lib)
+    lib.refresh_if_changed()
+    assert lib.refresh_if_changed()
+    assert _wait(lambda: not lib._refreshing)
+    assert [a.uuid for a in lib.assets] == before and lib.state == "ready"
+
+
+def test_unopened_or_unplugged_libraries_are_not_refreshed(opened, libs_dir):
+    lib, calls = opened
+    closed = Library(libs_dir / "Second.photoslibrary", Options())
+    assert not closed.refresh_if_changed()
+    os.rename(lib.path, libs_dir / "away")
+    assert not lib.refresh_if_changed()
+    assert calls == []
+
+
+def test_collection_watch_thread(libs_dir, monkeypatch):
+    col = Collection(libs_dir, Options())
+    seen = []
+    for lib in col.libraries.values():
+        monkeypatch.setattr(lib, "refresh_if_changed", lambda lib=lib: seen.append(lib.name))
+    stop = col.watch(0.05)
+    assert _wait(lambda: {"Fake", "Second"} <= set(seen))
+    stop.set()

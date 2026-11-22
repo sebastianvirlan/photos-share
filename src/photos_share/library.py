@@ -63,7 +63,11 @@ class Library:
     by_uuid: dict[str, Asset] = field(default_factory=dict)
     albums: list[dict] = field(default_factory=list)
     people: list[dict] = field(default_factory=list)
+    rev: int = 0  # bumps each time a new index is applied; lets the page spot updates
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _loaded_fp: list | None = None    # fingerprint of the index currently in memory
+    _pending_fp: list | None = None   # a newer fingerprint seen once, waiting to settle
+    _refreshing: bool = False
 
     def __post_init__(self):
         self.id = hashlib.sha1(str(self.path).encode()).hexdigest()[:10]
@@ -118,6 +122,37 @@ class Library:
         except Exception as e:  # noqa: BLE001 - surfaced to the UI
             log.exception("failed to open %s", self.path)
             self.state, self.error = "error", str(e)
+
+    def refresh_if_changed(self) -> bool:
+        """Re-index in the background if Photos changed the library. Call periodically.
+
+        A change must look the same on two consecutive calls before re-indexing, so a
+        library that Photos is still busy writing isn't re-read on every check.
+        Returns True if a refresh was started.
+        """
+        if self.state != "ready" or self._refreshing or not self.available:
+            return False
+        fp = self._fingerprint()
+        if fp == self._loaded_fp:
+            self._pending_fp = None
+            return False
+        if fp != self._pending_fp:
+            self._pending_fp = fp  # changed (or still changing): look again next time
+            return False
+        self._refreshing = True
+        threading.Thread(target=self._refresh, daemon=True, name=f"refresh-{self.name}").start()
+        return True
+
+    def _refresh(self) -> None:
+        try:
+            with _open_lock:
+                log.info("library changed, re-indexing %s", self.name)
+                self._apply(self._build_index())
+        except Exception:  # noqa: BLE001 - keep serving the previous index
+            log.exception("re-indexing %s failed; keeping the previous index", self.path)
+        finally:
+            self._pending_fp = None
+            self._refreshing = False
 
     def _build_index(self) -> dict:
         import osxphotos
@@ -195,8 +230,20 @@ class Library:
         # with no visible photos, and avatars on hidden photos are dropped here.
         people = [dict(p, face=p["face"] if p["face"] and p["face"]["u"] in by_uuid else None)
                   for p in data.get("people", [])]
+        self._drop_stale_renditions(by_uuid)
         self.assets, self.by_uuid, self.albums, self.people = visible, by_uuid, albums, people
+        self._loaded_fp = data.get("fingerprint")
+        self.rev += 1
         self.state = "ready"
+
+    def _drop_stale_renditions(self, new: dict[str, Asset]) -> None:
+        """Photos edited (or replaced) since the last index get fresh previews."""
+        for uuid, old in self.by_uuid.items():
+            cur = new.get(uuid)
+            if cur and (cur.edited, cur.original) == (old.edited, old.original):
+                continue
+            for sub, ext in (("thumb", "jpg"), ("full", "jpg"), ("video", "mp4")):
+                (self.cache_dir / sub / f"{uuid}.{ext}").unlink(missing_ok=True)
 
     # ---- file lookup (server-side only) ------------------------------------
 
@@ -285,3 +332,19 @@ class Collection:
 
     def get(self, lib_id: str) -> Library | None:
         return self.libraries.get(lib_id)
+
+    def watch(self, interval: float) -> threading.Event:
+        """Check opened libraries for changes every `interval` seconds. Set the returned
+        event to stop."""
+        stop = threading.Event()
+
+        def loop():
+            while not stop.wait(interval):
+                for lib in self.libraries.values():
+                    try:
+                        lib.refresh_if_changed()
+                    except OSError:
+                        pass  # drive went away mid-check; try again next time
+
+        threading.Thread(target=loop, daemon=True, name="watch").start()
+        return stop

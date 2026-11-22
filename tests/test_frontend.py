@@ -18,7 +18,7 @@ def a(u, d, **kw):
 
 
 LIBRARY = {
-    "id": "abc", "name": "Test", "state": "ready", "available": True, "downloads": True,
+    "id": "abc", "name": "Test", "state": "ready", "available": True, "downloads": True, "rev": 1,
     "assets": [
         a("U1", "2024-05-02T10:00:00+01:00", f=True, g=[44.4, 26.1], pl="Bucharest, Romania", p=[0]),
         a("U2", "2024-05-01T09:00:00+01:00", k="s", p=[0]),
@@ -31,7 +31,8 @@ LIBRARY = {
     "people": [{"name": "Ana", "face": {"u": "U1", "x": 0.5, "y": 0.4, "s": 0.1}, "count": 2},
                {"name": "Nobody", "face": None, "count": 0}],
 }
-LIBRARIES = [{"id": "abc", "name": "Test", "state": "ready", "available": True, "count": 6,
+# rev 2 > the library's rev 1: the page should offer "New photos".
+LIBRARIES = [{"id": "abc", "name": "Test", "state": "ready", "available": True, "count": 6, "rev": 2,
               "cover": "U1", "first": "2023-08-01", "last": "2024-05-02"},
              {"id": "x", "name": "Other", "state": "closed", "available": False}]
 

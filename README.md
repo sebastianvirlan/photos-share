@@ -33,6 +33,8 @@ uv run photos-share "/Volumes/My Passport for Mac/Photolibraries" --tailscale
 | `--password` | Require a password (prompted at start, or `PHOTOS_SHARE_PASSWORD`) |
 | `--tailscale` | Listen only on this Mac's Tailscale address; viewers need the Tailscale app |
 | `--funnel` | Public `https://…ts.net` link via Tailscale Funnel; no app needed; password required |
+| `--refresh SECONDS` | How often to check for photos added in Photos (default 60; `0` = off) |
+| `--no-keep-awake` | Let the Mac sleep while sharing (kept awake by default) |
 | `--host`, `--port` | Bind address (default `127.0.0.1`) and port (default `8080`) |
 
 Hidden and Recently Deleted photos are never shared.
@@ -54,8 +56,10 @@ ask you to enable Funnel for your network via a link it prints.
 Generated thumbnails, previews and library indexes are cached in
 `~/Library/Caches/photos-share/` and can be deleted at any time.
 
-Don't open a library in Photos.app while sharing it. Photos may upgrade it, and the tool
-will then rebuild its index.
+Photos you add or edit in Photos.app while sharing appear automatically. Every minute, the
+tool checks whether the library changed. Once the changes have settled, it re-indexes in the
+background, and the viewer's page shows a **New photos · Show** button. Edited photos get
+fresh previews.
 
 ## Tests
 

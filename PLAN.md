@@ -78,6 +78,11 @@ Press Ctrl+C to stop sharing.
      with the command line (`share.py`) and keeps the password in the Keychain.
    - Index format v3; existing caches re-index on first open.
 
+5. ✅ **Live updates.** Changed libraries re-index in the background (once the database has
+   settled across two checks). The page polls and offers "New photos · Show", and edited
+   photos' cached previews are dropped. Keep-awake (`caffeinate`) is on by default, and the
+   test suite (`uv run pytest`) is in place.
+
 ## Findings
 
 - Opening a big library (~300 MB database) takes about 15 s cold: about 12 s to copy the

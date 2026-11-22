@@ -130,6 +130,8 @@ async function loadLibrary(id) {
     const data = await res.json();
     if (res.ok && data.state === "ready") {
       lib = { ...data, index: new Map(data.assets.map(a => [a.u, a])) };
+      hideUpdate();
+      pollForUpdates();
       return true;
     }
     const msg = {
@@ -146,6 +148,41 @@ async function loadLibrary(id) {
     if (data.state === "error") return false;
     await sleep(data.state === "unavailable" ? 5000 : 1500);
   }
+}
+
+// ---------------------------------------------------------------- updates
+
+// The server re-indexes a library when photos are added in Photos; offer to show them.
+const POLL_MS = 60000;
+let pollTimer = 0, updateBtn = null;
+
+function pollForUpdates() {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(checkForUpdates, POLL_MS);
+}
+
+async function checkForUpdates() {
+  if (!lib) return;
+  try {
+    const me = (await (await api("/api/libraries")).json()).find(l => l.id === lib.id);
+    if (me && me.rev > lib.rev) return showUpdate();
+  } catch {}
+  pollForUpdates();
+}
+
+function showUpdate() {
+  if (updateBtn) return;
+  updateBtn = h("button", { class: "update", onclick: async () => {
+    hideUpdate();
+    lib = null;          // force a fresh load; route() re-renders the current view
+    await route();
+  } }, "New photos · Show");
+  document.body.append(updateBtn);
+}
+
+function hideUpdate() {
+  updateBtn?.remove();
+  updateBtn = null;
 }
 
 function simpleBar(title) {
