@@ -20,6 +20,8 @@ def main() -> None:
                         help="share only this library (repeatable), e.g. --only 'Final 13 pro'")
     parser.add_argument("--screenshots", action="store_true",
                         help="include screenshots and screen recordings (hidden by default)")
+    parser.add_argument("--hidden", action="store_true",
+                        help="include photos from Photos' Hidden album (shown under 'Hidden')")
     parser.add_argument("--video", choices=["original", "convert"], default="original",
                         help="original: stream files as-is (iPhone/Mac). "
                              "convert: 1080p H.264 via avconvert (plays everywhere, slower start)")
@@ -73,6 +75,7 @@ def main() -> None:
 
     mode = "tailscale" if args.tailscale else "funnel" if args.funnel else "local"
     cfg = ShareConfig(path=args.path, only=args.only or [], screenshots=args.screenshots,
+                      hidden=args.hidden,
                       video=args.video, downloads=args.downloads, password=password,
                       mode=mode, host=args.host, port=args.port, keep_awake=args.keep_awake,
                       refresh=args.refresh)
@@ -86,9 +89,10 @@ def main() -> None:
     say(f"{len(libs)} librar{'y' if len(libs) == 1 else 'ies'} "
           f"({ready} already indexed; others index on first open)")
     say(f"Screenshots: {'shown' if args.screenshots else 'hidden'} · "
+        f"Hidden album: {'included' if args.hidden else 'excluded'} · "
           f"Video: {args.video} · Downloads: {'on' if args.downloads else 'off'} · "
           f"Password: {'on' if password else 'off'} · "
-          f"Keep awake: {'on' if args.keep_awake else 'off'} · Hidden & deleted photos: excluded")
+          f"Keep awake: {'on' if args.keep_awake else 'off'} · Recently Deleted: excluded")
     if mode == "funnel":
         say("\n⚠ PUBLIC link: anyone who has it reaches the password page.")
     elif mode == "local" and args.host not in ("127.0.0.1", "localhost"):

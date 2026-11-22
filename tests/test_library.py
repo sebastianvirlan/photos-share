@@ -192,3 +192,13 @@ def test_collection_watch_thread(libs_dir, monkeypatch):
     stop = col.watch(0.05)
     assert _wait(lambda: {"Fake", "Second"} <= set(seen))
     stop.set()
+
+
+def test_hidden_excluded_by_default_and_included_on_request(libs_dir):
+    lib = Library(libs_dir / "Fake.photoslibrary", Options())
+    lib.load_cached()
+    assert "HD" not in lib.by_uuid
+    assert lib.albums == [{"title": "Trip", "uuids": ["P1"]}]
+    lib = Library(libs_dir / "Fake.photoslibrary", Options(show_hidden=True))
+    lib.load_cached()
+    assert lib.by_uuid["HD"].is_hidden and lib.assets[-1].uuid == "HD"

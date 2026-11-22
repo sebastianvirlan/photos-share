@@ -26,8 +26,9 @@ LIBRARY = {
         a("U4", "2023-12-24T20:00:00+01:00", l=True, f=True),
         a("U5", "2023-08-01T12:00:00+01:00", e=True),
         a("U6", "2023-08-02T12:00:00+01:00"),
+        a("H1", "2023-08-03T12:00:00+01:00", hd=True, f=True, p=[0]),
     ],
-    "albums": [{"title": "Trip", "uuids": ["U1", "U2"]}],
+    "albums": [{"title": "Trip", "uuids": ["U1", "U2", "H1"]}],
     "people": [{"name": "Ana", "face": {"u": "U1", "x": 0.5, "y": 0.4, "s": 0.1}, "count": 2},
                {"name": "Nobody", "face": None, "count": 0}],
 }

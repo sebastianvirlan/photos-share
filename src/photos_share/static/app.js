@@ -6,6 +6,7 @@
 //   #/l/<lib>/m/<type>              favourites / media type (see MEDIA)
 //   #/l/<lib>/people, /person/<n>   people, one person's photos
 //   #/l/<lib>/places                map
+//   #/l/<lib>/hidden                Photos' Hidden album (only if the share includes it)
 //   …/p/<uuid>                      viewer over whichever of the above
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -129,7 +130,9 @@ async function loadLibrary(id) {
     if (res.status === 404) { location.replace("#/"); return false; }
     const data = await res.json();
     if (res.ok && data.state === "ready") {
-      lib = { ...data, index: new Map(data.assets.map(a => [a.u, a])) };
+      // Hidden photos (only sent when the share includes them) live apart, like in Photos.
+      lib = { ...data, assets: data.assets.filter(a => !a.hd), hidden: data.assets.filter(a => a.hd),
+              index: new Map(data.assets.map(a => [a.u, a])) };
       hideUpdate();
       pollForUpdates();
       return true;
@@ -195,7 +198,7 @@ function renderScope(base) {
   const key = base.join("/");
   if (base[0] === "a" && lib.albums[+base[1]]) {
     const al = lib.albums[+base[1]];
-    const list = al.uuids.map(u => lib.index.get(u)).filter(Boolean);
+    const list = al.uuids.map(u => lib.index.get(u)).filter(a => a && !a.hd);
     scope = { key, base, title: al.title, list, album: +base[1], kind: "album" };
   } else if (base[0] === "m" && MEDIA[base[1]]) {
     const [label, pred] = MEDIA[base[1]];
@@ -206,6 +209,8 @@ function renderScope(base) {
     const i = +base[1];
     scope = { key, base, title: lib.people[i].name, list: lib.assets.filter(a => a.p?.includes(i)),
       kind: "person", person: i };
+  } else if (base[0] === "hidden") {
+    scope = { key, base, title: "Hidden", list: lib.hidden, kind: "media", media: "hidden" };
   } else if (base[0] === "places") {
     scope = { key, base, title: "Places", list: lib.assets.filter(a => a.g), kind: "places" };
   } else {
@@ -264,6 +269,8 @@ function sidebar() {
     people ? item(baseHash(["people"]), "People", people,
       scope.kind === "people" || scope.kind === "person") : null,
     places ? item(baseHash(["places"]), "Places", places, scope.kind === "places") : null,
+    lib.hidden.length ? item(baseHash(["hidden"]), "Hidden", lib.hidden.length,
+      scope.media === "hidden") : null,
     media.length ? h("div", { class: "section" }, "Media Types") : null,
     media.map(([k, label, c]) => item(baseHash(["m", k]), label, c, scope.media === k)),
     lib.albums.length ? h("div", { class: "section" }, "Albums") : null,

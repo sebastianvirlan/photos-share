@@ -105,3 +105,17 @@ def test_unplugged_drive(client, fake_id, libs_dir):
     assert r.status_code == 503 and r.json()["state"] == "unavailable"
     os.rename(libs_dir / "away", libs_dir / "Fake.photoslibrary")
     assert client.get(f"/photo/{fake_id}/P2").status_code == 200   # back once plugged in
+
+
+def test_hidden_photos_flagged_and_kept_out_of_people_counts(make_client, fake_id):
+    client, _ = make_client(hidden=True)
+    data = client.get(f"/api/libraries/{fake_id}").json()
+    hd = next(a for a in data["assets"] if a["u"] == "HD")
+    assert hd["hd"] is True
+    assert all("hd" not in a for a in data["assets"] if a["u"] != "HD")
+    assert data["people"][0]["count"] == 1      # Ana: P1 only, not the hidden HD
+    assert client.get(f"/thumb/{fake_id}/HD").status_code == 200
+
+
+def test_hidden_photos_unreachable_without_option(client, fake_id):
+    assert client.get(f"/thumb/{fake_id}/HD").status_code == 404

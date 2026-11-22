@@ -5,17 +5,25 @@ from your Mac. Read-only, no uploads, no copies. The library is the source of tr
 
 ## Mac app (menu bar)
 
+A native SwiftUI app (in `mac/`). It runs the Python tools from this checkout in the
+background.
+
 ```sh
 scripts/build-app.sh          # builds Photos Share.app in /Applications and shows it in Finder
 ```
 
-Open **Photos Share** from Applications. It lives in the menu bar:
-**Choose Library or Folder…** → **Who can see it** (this Mac / Tailscale / public link) →
-**Start Sharing**. The link is copied automatically. Settings are remembered, and the
-viewer password is kept in your Keychain. Logs go to `~/Library/Logs/photos-share.log`.
+Requirements: `uv` (`brew install uv`) and Swift (`xcode-select --install`). Xcode isn't needed.
 
-The app runs this checkout via `uv`, so keep the repo folder where it is (or rebuild after
-moving it).
+The app lives in the menu bar and has two windows:
+- **Sharing:** choose a library or folder and who can see it (this Mac, Tailscale, or a
+  public link with a password). Then set the options: hidden photos, screenshots,
+  downloads, video conversion and keep-awake. The viewer password is kept in your Keychain.
+- **Clean Up After Import:** pick the two libraries, see the three groups as thumbnails,
+  compare any photo side by side, then **Move to Trash**, **Delete N Photos** (when the source
+  is the System Photo Library) or **Mark in Photos**. Every action re-checks both libraries
+  first.
+
+The app runs this checkout, so keep the repo folder where it is (or rebuild after moving it).
 
 ## Command line
 
@@ -27,6 +35,7 @@ uv run photos-share "/Volumes/My Passport for Mac/Photolibraries" --tailscale
 |---|---|
 | `PATH` | A `.photoslibrary`, or a folder containing several (shown as a library picker) |
 | `--only NAME` | Share only this library; repeatable |
+| `--hidden` | Include Photos' Hidden album, shown only under **Hidden** (excluded by default) |
 | `--screenshots` | Include screenshots and screen recordings (hidden by default) |
 | `--video original\|convert` | Stream originals (default; fine for iPhone/Mac) or convert to 1080p H.264 |
 | `--downloads` | Show a button to download original files (off by default) |
@@ -37,7 +46,7 @@ uv run photos-share "/Volumes/My Passport for Mac/Photolibraries" --tailscale
 | `--no-keep-awake` | Let the Mac sleep while sharing (kept awake by default) |
 | `--host`, `--port` | Bind address (default `127.0.0.1`) and port (default `8080`) |
 
-Hidden and Recently Deleted photos are never shared.
+Recently Deleted photos are never shared. Hidden photos are shared only with `--hidden`, and then only under a separate **Hidden** entry, as in Photos.
 
 The web page mirrors Photos: Library (Years / Months / Days / All Photos), Favourites, People,
 Places (map; needs internet for map tiles), Media Types and Albums.

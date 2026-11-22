@@ -46,7 +46,7 @@ def _jpeg(path: Path) -> None:
 def asset(uuid, date, **kw):
     base = dict(uuid=uuid, date=date, width=64, height=48, is_movie=False, is_screenshot=False,
                 original=None, edited=None, live=None, filename=None, favorite=False, kinds="",
-                lat=None, lon=None, place=None, persons=[])
+                lat=None, lon=None, place=None, persons=[], is_hidden=False)
     return {**base, **kw}
 
 
@@ -61,8 +61,10 @@ ASSETS = [
           filename="IMG_0002.MOV"),
     asset("LV", "2022-06-01T08:00:00+02:00", original="originals/L/LV.jpeg",
           live="originals/L/LV_live.mov"),
+    asset("HD", "2021-03-03T08:00:00+00:00", original="originals/H/HD.jpeg", is_hidden=True,
+          persons=[0]),
 ]
-ALBUMS = [{"title": "Trip", "uuids": ["P1", "SS"]}, {"title": "OnlyShots", "uuids": ["SS"]}]
+ALBUMS = [{"title": "Trip", "uuids": ["P1", "SS", "HD"]}, {"title": "OnlyShots", "uuids": ["SS"]}]
 PEOPLE = [{"name": "Ana", "face": {"u": "P1", "x": 0.5, "y": 0.4, "s": 0.2}},
           {"name": "Screenshot Person", "face": {"u": "SS", "x": 0.5, "y": 0.5, "s": 0.2}}]
 MOVIE_BYTES = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 40
@@ -112,8 +114,9 @@ def libs_dir(tmp_path):
 
 @pytest.fixture
 def make_client(libs_dir):
-    def make(screenshots=False, downloads=False, video="original", auth=None, only=None):
-        col = Collection(libs_dir, Options(show_screenshots=screenshots), only)
+    def make(screenshots=False, downloads=False, video="original", auth=None, only=None,
+             hidden=False):
+        col = Collection(libs_dir, Options(show_screenshots=screenshots, show_hidden=hidden), only)
         return TestClient(create_app(col, video, downloads, auth)), col
     return make
 

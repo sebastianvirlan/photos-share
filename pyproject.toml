@@ -6,13 +6,11 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.165.0",
     "osxphotos>=0.78.1",
-    "rumps>=0.4.0",
     "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]
 photos-share = "photos_share:main"
-photos-share-app = "photos_share.app:main"
 photos-dedupe = "photos_share.dedupe:main"
 
 [build-system]

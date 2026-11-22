@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CACHE_ROOT = Path.home() / "Library" / "Caches" / "photos-share"
-INDEX_VERSION = 3
+INDEX_VERSION = 4
 log = logging.getLogger("photos_share")
 
 # Opening a library reads a large DB from a spinning disk; do one at a time.
@@ -41,6 +41,7 @@ class Asset:
     lon: float | None = None
     place: str | None = None  # e.g. "Bucharest, Romania"
     persons: tuple[int, ...] = ()  # indexes into Library.people
+    is_hidden: bool = False  # in Photos' Hidden album; only shared with --hidden
 
 
 # One letter per media type, so the per-asset payload stays small.
@@ -50,6 +51,7 @@ KINDS = {"s": "selfie", "n": "panorama", "p": "portrait", "o": "slow_mo", "t": "
 @dataclass
 class Options:
     show_screenshots: bool = False
+    show_hidden: bool = False
 
 
 @dataclass
@@ -171,9 +173,7 @@ class Library:
             people.append({"name": pi.name, "face": _avatar(pi)})
 
         assets = []
-        for p in db.photos():  # excludes Recently Deleted
-            if p.hidden:
-                continue
+        for p in db.photos():  # excludes Recently Deleted; hidden kept, filtered per share
             lat, lon = p.location if p.location else (None, None)
             persons = sorted({person_index[f.person_info.uuid] for f in p.face_info
                               if f.person_info and f.person_info.uuid in person_index})
@@ -183,6 +183,7 @@ class Library:
                 "lat": lat, "lon": lon,
                 "place": _place_name(p.place),
                 "persons": persons,
+                "is_hidden": bool(p.hidden),
                 "uuid": p.uuid,
                 "date": p.date.isoformat(),
                 "width": p.width or 0,
@@ -218,7 +219,8 @@ class Library:
         all_assets = [Asset(**{**a, "persons": tuple(a.get("persons", ()))})
                       for a in data["assets"]]
         visible = [a for a in all_assets
-                   if self.options.show_screenshots or not a.is_screenshot]
+                   if (self.options.show_screenshots or not a.is_screenshot)
+                   and (self.options.show_hidden or not a.is_hidden)]
         visible.sort(key=lambda a: a.date, reverse=True)
         by_uuid = {a.uuid: a for a in visible}
         albums = []

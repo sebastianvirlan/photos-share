@@ -27,6 +27,7 @@ class ShareConfig:
     path: Path
     only: list[str] = field(default_factory=list)
     screenshots: bool = False
+    hidden: bool = False        # include Photos' Hidden album (shown separately)
     video: str = "original"     # original | convert
     downloads: bool = False
     password: str | None = None
@@ -49,7 +50,7 @@ class Share:
                              f"{MIN_FUNNEL_PASSWORD} characters.")
         self.cfg = cfg
         try:
-            self.collection = Collection(cfg.path, Options(show_screenshots=cfg.screenshots),
+            self.collection = Collection(cfg.path, Options(show_screenshots=cfg.screenshots, show_hidden=cfg.hidden),
                                          cfg.only or None)
         except ValueError as e:
             raise ShareError(str(e)) from e

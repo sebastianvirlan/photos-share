@@ -45,6 +45,10 @@ const go = async h => { location.hash = h; await tick(); };
     await go("#/l/abc/person/0");
     check("person page lists their photos", tiles() === 2 && document.title.startsWith("Ana"), tiles());
 
+    await go("#/l/abc/hidden");
+    check("hidden photos only under Hidden", tiles() === 1 && document.title.startsWith("Hidden"), tiles());
+    check("sidebar lists Hidden", root.byClass("sidebar")[0].text().includes("Hidden"));
+
     await go("#/l/abc/places");
     check("places renders a map", root.byClass("map").length === 1);
 

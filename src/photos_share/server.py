@@ -188,12 +188,16 @@ def _asset_json(a: Asset) -> dict:
         out["pl"] = a.place
     if a.persons:
         out["p"] = list(a.persons)
+    if a.is_hidden:
+        out["hd"] = True  # the page shows these only under "Hidden", like Photos
     return out
 
 
 def _people_json(lib: Library) -> list[dict]:
     counts = [0] * len(lib.people)
     for a in lib.assets:
+        if a.is_hidden:
+            continue
         for i in a.persons:
             if i < len(counts):
                 counts[i] += 1
