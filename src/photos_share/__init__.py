@@ -25,6 +25,8 @@ def main() -> None:
     parser.add_argument("--video", choices=["original", "convert"], default="original",
                         help="original: stream files as-is (iPhone/Mac). "
                              "convert: 1080p H.264 via avconvert (plays everywhere, slower start)")
+    parser.add_argument("--downloads", action="store_true",
+                        help="let viewers download original files (off by default)")
     net = parser.add_mutually_exclusive_group()
     net.add_argument("--tailscale", action="store_true",
                      help="listen on this Mac's Tailscale address only")
@@ -53,7 +55,8 @@ def main() -> None:
     print(f"{len(libs)} librar{'y' if len(libs) == 1 else 'ies'} "
           f"({ready} already indexed; others index on first open)")
     print(f"Screenshots: {'shown' if args.screenshots else 'hidden'} · "
-          f"Video: {args.video} · Hidden & deleted photos: excluded")
+          f"Video: {args.video} · Downloads: {'on' if args.downloads else 'off'} · "
+          "Hidden & deleted photos: excluded")
 
     host, url_host = args.host, args.host
     if args.tailscale:
@@ -68,7 +71,7 @@ def main() -> None:
           flush=True)
 
     import uvicorn
-    uvicorn.run(create_app(col, args.video), host=host, port=args.port, log_level="warning")
+    uvicorn.run(create_app(col, args.video, args.downloads), host=host, port=args.port, log_level="warning")
 
 
 def _tailscale_ip() -> str | None:

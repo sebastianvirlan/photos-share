@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CACHE_ROOT = Path.home() / "Library" / "Caches" / "photos-share"
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 log = logging.getLogger("photos_share")
 
 # Opening a library reads a large DB from a spinning disk; do one at a time.
@@ -34,6 +34,7 @@ class Asset:
     original: str | None  # paths relative to the library root; never sent to clients
     edited: str | None
     live: str | None  # paired video of a Live Photo
+    filename: str | None  # original filename, e.g. IMG_1234.HEIC
 
 
 @dataclass
@@ -60,6 +61,11 @@ class Library:
     @property
     def name(self) -> str:
         return self.path.stem
+
+    @property
+    def available(self) -> bool:
+        """False when the drive holding the library is unplugged."""
+        return (self.path / "database").is_dir()
 
     # ---- loading -----------------------------------------------------------
 
@@ -88,7 +94,7 @@ class Library:
     def ensure_open(self) -> None:
         """Start indexing in the background if needed. Returns immediately."""
         with self._lock:
-            if self.state in ("ready", "opening"):
+            if self.state in ("ready", "opening") or not self.available:
                 return
             self.state, self.error = "opening", None
         threading.Thread(target=self._open, daemon=True, name=f"open-{self.name}").start()
@@ -123,6 +129,7 @@ class Library:
                 "original": rel(p.path),
                 "edited": rel(p.path_edited),
                 "live": rel(p.path_live_photo) if p.live_photo else None,
+                "filename": p.original_filename,
             })
         albums = [
             {"title": a.title, "uuids": [p.uuid for p in a.photos]}

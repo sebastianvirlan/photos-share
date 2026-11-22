@@ -63,10 +63,12 @@ Press Ctrl+C to stop sharing.
    - Live Photos play from a LIVE button.
    - Screenshots hidden unless `--screenshots`.
    - `--tailscale` listens on the Tailscale address only.
-2. **Photos-style browsing.** Albums sidebar (already in the index); Years / Months / Days
-   views; Live Photo plays on press-and-hold.
-3. **Nice to have.** A small Mac app with a "Choose library…" button, and a "library not
-   available" page when the drive is unplugged.
+2. ✅ **Photos-style browsing.** Albums sidebar (a drawer on phones); Years / Months / Days /
+   All Photos views (Years → Months → Days drill-down); Live Photos play on press-and-hold or
+   on hovering over LIVE; optional `--downloads`.
+3. ✅ **Drive unplugged:** the library shows as "Drive not connected". Already-viewed photos still
+   load from the cache, and everything comes back when the drive is plugged in again.
+4. **Later, if needed:** a small Mac app with a "Choose library…" button; People and Places.
 
 ## Findings
 
@@ -76,6 +78,3 @@ Press Ctrl+C to stop sharing.
 - Upload measured 74 Mbps, enough to stream iPhone 4K originals, so `--video original`
   is the default.
 
-## Open questions
-
-- Should originals be downloadable, or view-only?

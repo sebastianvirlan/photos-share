@@ -13,7 +13,7 @@ STATIC = Path(__file__).parent / "static"
 IMG_CACHE = {"Cache-Control": "private, max-age=604800"}
 
 
-def create_app(col: Collection, video_mode: str) -> FastAPI:
+def create_app(col: Collection, video_mode: str, downloads: bool = False) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     converter = media.VideoConverter() if video_mode == "convert" else None
 
@@ -43,7 +43,8 @@ def create_app(col: Collection, video_mode: str) -> FastAPI:
     def libraries():
         out = []
         for lib in col.libraries.values():
-            item = {"id": lib.id, "name": lib.name, "state": lib.state}
+            item = {"id": lib.id, "name": lib.name, "state": lib.state,
+                    "available": lib.available}
             if lib.state == "ready" and lib.assets:
                 item.update(count=len(lib.assets), cover=lib.assets[0].uuid,
                             first=lib.assets[-1].date, last=lib.assets[0].date)
@@ -55,6 +56,8 @@ def create_app(col: Collection, video_mode: str) -> FastAPI:
         lib = col.get(lib_id)
         if lib is None:
             raise HTTPException(404)
+        if lib.state != "ready" and not lib.available:
+            return JSONResponse({"state": "unavailable", "name": lib.name}, status_code=503)
         if lib.state != "ready":
             lib.ensure_open()
             code = 500 if lib.state == "error" else 202
@@ -62,6 +65,7 @@ def create_app(col: Collection, video_mode: str) -> FastAPI:
                                 status_code=code)
         return {
             "id": lib.id, "name": lib.name, "state": "ready",
+            "available": lib.available, "downloads": downloads,
             "assets": [{"u": a.uuid, "d": a.date, "w": a.width, "h": a.height,
                         "m": a.is_movie, "l": bool(a.live), "e": bool(a.edited)}
                        for a in lib.assets],
@@ -116,5 +120,15 @@ def create_app(col: Collection, video_mode: str) -> FastAPI:
         if path is None:
             raise HTTPException(404)
         return FileResponse(path, media_type="video/mp4", headers=IMG_CACHE)
+
+    @app.get("/original/{lib_id}/{uuid}")
+    def original(lib_id: str, uuid: str):
+        if not downloads:
+            raise HTTPException(404)
+        lib, asset = lookup(lib_id, uuid)
+        path = lib.abs(asset.original)
+        if path is None:
+            raise HTTPException(404)
+        return FileResponse(path, filename=asset.filename or path.name)
 
     return app

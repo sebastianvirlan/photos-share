@@ -15,6 +15,7 @@ uv run photos-share "/Volumes/My Passport for Mac/Photolibraries" --tailscale
 | `--only NAME` | Share only this library; repeatable |
 | `--screenshots` | Include screenshots and screen recordings (hidden by default) |
 | `--video original\|convert` | Stream originals (default; fine for iPhone/Mac) or convert to 1080p H.264 |
+| `--downloads` | Show a button to download original files (off by default) |
 | `--tailscale` | Listen only on this Mac's Tailscale address |
 | `--host`, `--port` | Bind address (default `127.0.0.1`) and port (default `8080`) |
 
