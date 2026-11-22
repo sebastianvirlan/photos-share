@@ -72,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let manifest = EditSpike.requested {
             Task { @MainActor in await EditSpike.run(manifest) }
+        } else if let manifest = CreateSpike.requested {
+            Task { @MainActor in await CreateSpike.run(manifest) }
         }
     }
 
