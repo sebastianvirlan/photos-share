@@ -34,6 +34,9 @@ class Item:
     date: str           # ISO, second precision
     edited: bool
     hidden: bool = False
+    path: str | None = None     # original file on disk (None if Photos says it's missing)
+    live: str | None = None     # video half of a Live Photo
+    raw: str | None = None      # RAW file of a RAW+JPEG pair
 
     @classmethod
     def from_photo(cls, p) -> "Item":
@@ -41,7 +44,9 @@ class Item:
                    filename=(p.original_filename or "").lower() or None,
                    size=p.original_filesize or None,
                    date=p.date.replace(microsecond=0).isoformat() if p.date else "",
-                   edited=bool(p.hasadjustments), hidden=bool(p.hidden))
+                   edited=bool(p.hasadjustments), hidden=bool(p.hidden),
+                   path=p.path, live=p.path_live_photo if p.live_photo else None,
+                   raw=p.path_raw if p.has_raw else None)
 
     @property
     def fallback_key(self):
@@ -57,10 +62,13 @@ class Result:
     edit_lost: list[Item] = field(default_factory=list)          # in DEST, but without the edit
     missing: list[Item] = field(default_factory=list)            # not in DEST at all
     pairs: dict[str, tuple[str, str]] = field(default_factory=dict)  # src uuid → (dest uuid, how)
+    needs_review: list[Item] = field(default_factory=list)       # matched, but a file check failed
+    reasons: dict[str, str] = field(default_factory=dict)        # src uuid → why it needs a look
 
     @property
     def total(self) -> int:
-        return len(self.matched) + len(self.edit_lost) + len(self.missing)
+        return (len(self.matched) + len(self.edit_lost) + len(self.missing)
+                + len(self.needs_review))
 
 
 def match(source: list[Item], dest: list[Item]) -> Result:
@@ -92,6 +100,67 @@ def match(source: list[Item], dest: list[Item]) -> Result:
     return r
 
 
+def _size(path: str | None) -> int | None:
+    try:
+        return os.stat(path).st_size if path else None
+    except OSError:
+        return None
+
+
+def _sha256(path: str) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def check_pair(s: Item, d: Item, how: str) -> str | None:
+    """File-level checks for a matched pair. Returns why it needs a look, or None if fine."""
+    d_size = _size(d.path)
+    if d_size is None:
+        return "The original file is missing from the destination library."
+    s_size = _size(s.path) or s.size
+    if s_size and d_size != s_size:
+        return f"The destination file is a different size ({d_size:,} vs {s_size:,} bytes)."
+    if _size(s.live) is not None and _size(d.live) is None:
+        return "The Live Photo’s video is missing from the destination."
+    if _size(s.raw) is not None and _size(d.raw) is None:
+        return "The RAW file of this RAW+JPEG pair is missing from the destination."
+    if how != "fingerprint":
+        if _size(s.path) is None:
+            return "Matched by name, size and date, but the source file can’t be read to confirm."
+        if _sha256(s.path) != _sha256(d.path):
+            return "Same name, size and date, but the file contents differ."
+    return None
+
+
+def verify(r: Result, source: list[Item], dest: list[Item], progress=None) -> Result:
+    """Move matched photos whose files don't check out into `needs_review`."""
+    by_dest = {d.uuid: d for d in dest}
+    keep = []
+    for i, s in enumerate(r.matched):
+        if progress and i % 500 == 0:
+            progress(i, len(r.matched))
+        d_uuid, how = r.pairs[s.uuid]
+        reason = check_pair(s, by_dest[d_uuid], how)
+        if reason:
+            r.needs_review.append(s)
+            r.reasons[s.uuid] = reason
+            r.matched_by_fallback -= how != "fingerprint"
+        else:
+            keep.append(s)
+    r.matched = keep
+    return r
+
+
+def compare(src: Path, dst: Path, progress=None) -> Result:
+    """Read both libraries, match, then check the files of every match."""
+    s_items, d_items = load(src), load(dst)
+    return verify(match(s_items, d_items), s_items, d_items, progress)
+
+
 def load(path: Path) -> list[Item]:
     import osxphotos
     db = osxphotos.PhotosDB(dbfile=str(path), _skip_searchinfo=True)
@@ -107,13 +176,17 @@ def report(r: Result, src: Path, dst: Path) -> str:
         + (f"  ({r.matched_by_fallback:,} matched by filename+size+date)"
            if r.matched_by_fallback else ""),
         f"  ! In destination, edit lost: {len(r.edit_lost):,}  (kept out of the delete album)",
+        f"  ? Needs a look:              {len(r.needs_review):,}  (a file check failed; kept)",
         f"  ✗ Not in destination:        {len(r.missing):,}",
     ]
+    if r.needs_review:
+        lines += ["", "Needs a look (first few):"]
+        lines += [f"  {i.filename or i.uuid}: {r.reasons[i.uuid]}" for i in r.needs_review[:SAMPLE]]
     if r.missing:
         lines += ["", "Not imported (first few):"]
         lines += [f"  {i.filename or i.uuid}  {i.date[:10]}" for i in r.missing[:SAMPLE]]
     lines.append("")
-    if r.total and not r.missing and not r.edit_lost:
+    if all_verified(r):
         lines.append(f"Everything in “{src.stem}” is in “{dst.stem}”. After a final look, the "
                      "whole source library can go to the Trash (--trash-library).")
     elif r.matched:
@@ -189,7 +262,7 @@ class CleanupError(Exception):
 
 
 def all_verified(r: Result) -> bool:
-    return r.total > 0 and not r.missing and not r.edit_lost
+    return r.total > 0 and not r.missing and not r.edit_lost and not r.needs_review
 
 
 def system_library() -> Path | None:
@@ -346,14 +419,16 @@ def to_json(r: Result, src: Path, dst: Path) -> dict:
         return {"uuid": i.uuid, "name": i.filename, "date": i.date, "edited": i.edited,
                 "thumb": src_thumbs.get(i.uuid),
                 "dest": pair[0] if pair else None, "how": pair[1] if pair else None,
-                "dest_thumb": dst_thumbs.get(pair[0]) if pair else None}
+                "dest_thumb": dst_thumbs.get(pair[0]) if pair else None,
+                "reason": r.reasons.get(i.uuid)}
 
     return {"source": str(src), "dest": str(dst), "source_name": src.stem,
             "dest_name": dst.stem, "total": r.total, "all_verified": all_verified(r),
             "source_is_system": system == src, "dest_is_system": system == dst,
             "matched": [row(i) for i in r.matched],
             "edit_lost": [row(i) for i in r.edit_lost],
-            "missing": [row(i) for i in r.missing]}
+            "missing": [row(i) for i in r.missing],
+            "needs_review": [row(i) for i in r.needs_review]}
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -400,7 +475,7 @@ def main(argv: list[str] | None = None) -> None:
 
     say("Reading both libraries… (a minute for big ones on an HDD)")
     try:
-        r = match(load(src), load(dst))
+        r = compare(src, dst, progress=lambda i, n: say(f"Checking files… {i:,}/{n:,}"))
     except Exception as e:  # noqa: BLE001
         fail(f"couldn’t read the libraries: {e}")
     if not args.json:

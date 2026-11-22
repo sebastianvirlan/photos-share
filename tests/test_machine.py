@@ -71,9 +71,9 @@ def test_machine_port_in_use(libs_dir, cache_root):
 
 # ---- photos-dedupe --json -------------------------------------------------------------
 
-def item(uuid, fp, edited=False):
+def item(uuid, fp, edited=False, path=None):
     return Item(uuid=uuid, fingerprint=fp, filename=f"{uuid.lower()}.heic", size=10,
-                date="2024-01-01T10:00:00+00:00", edited=edited)
+                date="2024-01-01T10:00:00+00:00", edited=edited, path=path)
 
 
 @pytest.fixture
@@ -84,8 +84,15 @@ def two_libs(tmp_path, monkeypatch):
         d = lib / "resources" / "derivatives" / "masters" / uuid[0]
         d.mkdir(parents=True)
         (d / f"{uuid}_4_5005_c.jpeg").write_bytes(b"jpg")
-    data = {src: [item("A", "f1"), item("B", "f2", edited=True), item("C", "f3")],
-            dst: [item("E9", "f1"), item("E8", "f2")]}
+    def f(lib, name):
+        p = lib / "originals" / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"0123456789")
+        return str(p)
+    data = {src: [item("A", "f1", path=f(src, "a")), item("B", "f2", edited=True),
+                  item("C", "f3"), item("R", "f4", path=f(src, "r"))],
+            dst: [item("E9", "f1", path=f(dst, "e9")), item("E8", "f2"),
+                  item("E7", "f4", path=None)]}     # R's copy has no file in DEST
     monkeypatch.setattr(dedupe, "load", lambda p: data[p])
     monkeypatch.setattr(dedupe, "system_library", lambda: None)
     return src, dst
@@ -95,13 +102,16 @@ def test_dedupe_json(two_libs, capsys):
     src, dst = two_libs
     dedupe.main([str(src), str(dst), "--json"])
     out = json.loads(capsys.readouterr().out)
-    assert (out["source_name"], out["dest_name"], out["total"]) == ("Src", "Dst", 3)
+    assert (out["source_name"], out["dest_name"], out["total"]) == ("Src", "Dst", 4)
     assert out["all_verified"] is False and out["source_is_system"] is False
     a = out["matched"][0]
     assert (a["uuid"], a["dest"], a["how"]) == ("A", "E9", "fingerprint")
     assert a["thumb"].endswith("A_4_5005_c.jpeg") and a["dest_thumb"].endswith("E9_4_5005_c.jpeg")
     assert [i["uuid"] for i in out["edit_lost"]] == ["B"]
     assert [i["uuid"] for i in out["missing"]] == ["C"] and out["missing"][0]["dest"] is None
+    assert [i["uuid"] for i in out["needs_review"]] == ["R"]
+    assert out["needs_review"][0]["reason"].startswith("The original file is missing")
+    assert out["matched"][0]["reason"] is None
     assert out["outcome"] is None
 
 

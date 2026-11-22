@@ -7,6 +7,10 @@ struct PhotosShareApp: App {
     @State private var share = ShareModel.shared
     @State private var cleanup = CleanupModel()
 
+    init() {
+        MainActor.assumeIsolated { Snapshot.runIfRequested() }
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuContent(share: share)

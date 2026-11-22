@@ -67,9 +67,12 @@ def test_report_wording():
 def test_item_from_photo():
     p = types.SimpleNamespace(uuid="U", fingerprint="F", original_filename="IMG_9.HEIC",
                               original_filesize=42, date=datetime(2024, 5, 1, 10, 0, 0, 123456),
-                              hasadjustments=1, hidden=False)
+                              hasadjustments=1, hidden=False, path="/x/IMG_9.HEIC",
+                              live_photo=True, path_live_photo="/x/IMG_9.MOV",
+                              has_raw=False, path_raw=None)
     i = Item.from_photo(p)
     assert (i.filename, i.size, i.date, i.edited) == ("img_9.heic", 42, "2024-05-01T10:00:00", True)
+    assert (i.path, i.live, i.raw) == ("/x/IMG_9.HEIC", "/x/IMG_9.MOV", None)
 
 
 def test_mark_creates_unique_album_in_batches(monkeypatch, tmp_path):
@@ -326,3 +329,70 @@ def test_trash_moves_library(src, finder, monkeypatch):
 def test_real_system_library_lookup_is_a_path():
     p = dedupe.system_library()
     assert p is None or p.suffix == ".photoslibrary"
+
+
+
+# ---- file-level verification ----------------------------------------------------------
+
+from photos_share.dedupe import verify  # noqa: E402
+
+
+def files(tmp_path, name, content=b"photo-bytes", live=None, raw=None):
+    d = tmp_path / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "img.heic").write_bytes(content)
+    out = {"path": str(d / "img.heic")}
+    for key, data in (("live", live), ("raw", raw)):
+        if data is not None:
+            (d / f"img.{key}").write_bytes(data)
+            out[key] = str(d / f"img.{key}")
+    return out
+
+
+def pair(tmp_path, src_kw=None, dst_kw=None, fp=("X", "X")):
+    s = Item(uuid="S", fingerprint=fp[0], filename="img.heic", size=11, date="d",
+             edited=False, **(src_kw or files(tmp_path, "src")))
+    d = Item(uuid="D", fingerprint=fp[1], filename="img.heic", size=11, date="d",
+             edited=False, **(dst_kw or files(tmp_path, "dst")))
+    return verify(match([s], [d]), [s], [d])
+
+
+def test_verified_when_files_check_out(tmp_path):
+    r = pair(tmp_path)
+    assert [i.uuid for i in r.matched] == ["S"] and not r.needs_review
+
+
+def test_destination_file_missing(tmp_path):
+    r = pair(tmp_path, dst_kw={"path": str(tmp_path / "gone.heic")})
+    assert r.reasons["S"].startswith("The original file is missing") and not r.matched
+
+
+def test_destination_file_different_size(tmp_path):
+    r = pair(tmp_path, dst_kw=files(tmp_path, "dst", b"truncated"))
+    assert "different size" in r.reasons["S"]
+
+
+def test_live_video_must_come_across(tmp_path):
+    r = pair(tmp_path, src_kw=files(tmp_path, "src", live=b"mov"), dst_kw=files(tmp_path, "dst"))
+    assert "Live Photo’s video" in r.reasons["S"]
+    r = pair(tmp_path, src_kw=files(tmp_path, "s2", live=b"mov"),
+             dst_kw=files(tmp_path, "d2", live=b"mov"))
+    assert not r.needs_review
+
+
+def test_raw_must_come_across(tmp_path):
+    r = pair(tmp_path, src_kw=files(tmp_path, "src", raw=b"nef"), dst_kw=files(tmp_path, "dst"))
+    assert "RAW file" in r.reasons["S"]
+
+
+def test_fallback_matches_are_checksummed(tmp_path):
+    same = pair(tmp_path, fp=("X", "Y"))   # different fingerprints → fallback match
+    assert same.matched and same.matched_by_fallback == 1
+    differ = pair(tmp_path, src_kw=files(tmp_path, "s2", b"aaaaaaaaaaa"),
+                  dst_kw=files(tmp_path, "d2", b"bbbbbbbbbbb"), fp=("X", "Y"))
+    assert "contents differ" in differ.reasons["S"] and differ.matched_by_fallback == 0
+
+
+def test_needs_review_blocks_trashing_whole_library(tmp_path):
+    r = pair(tmp_path, dst_kw={"path": None})
+    assert not dedupe.all_verified(r) and r.total == 1

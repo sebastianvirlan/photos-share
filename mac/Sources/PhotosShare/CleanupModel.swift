@@ -12,6 +12,7 @@ struct CleanupRow: Codable, Identifiable, Hashable {
     let dest: String?
     let how: String?
     let dest_thumb: String?
+    let reason: String?
     var id: String { uuid }
 }
 
@@ -27,22 +28,25 @@ struct CleanupReport: Codable {
     let matched: [CleanupRow]
     let edit_lost: [CleanupRow]
     let missing: [CleanupRow]
+    let needs_review: [CleanupRow]
     let outcome: String?
 }
 
 enum CleanupGroup: String, CaseIterable, Identifiable {
-    case matched, editLost, missing
+    case matched, review, editLost, missing
     var id: String { rawValue }
     var title: String {
         switch self {
         case .matched: "In the destination"
+        case .review: "Needs a look"
         case .editLost: "Edit didn’t come across"
         case .missing: "Not imported"
         }
     }
     var explanation: String {
         switch self {
-        case .matched: "These photos are in the destination library too, so they’re safe to remove from the source."
+        case .matched: "These photos are in the destination library and their files check out (present, same size, Live Photo and RAW parts included), so they’re safe to remove from the source."
+        case .review: "These seemed to be in the destination, but a file check failed. Click one to see why. They’re kept."
         case .editLost: "These are in the destination, but without the edit you made in the source. They’re kept so you don’t lose the edit."
         case .missing: "These aren’t in the destination at all. They’re kept."
         }
@@ -50,6 +54,7 @@ enum CleanupGroup: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .matched: "checkmark.circle.fill"
+        case .review: "questionmark.circle.fill"
         case .editLost: "exclamationmark.triangle.fill"
         case .missing: "xmark.circle.fill"
         }
@@ -75,10 +80,19 @@ final class CleanupModel {
         return source != dest
     }
 
+    /// For `--snapshot` renders only: show a canned report without running the tools.
+    func showForSnapshot(_ r: CleanupReport?, source: URL?, dest: URL?) {
+        self.source = source
+        self.dest = dest
+        report = r
+        state = r == nil ? .idle : .ready
+    }
+
     func rows(_ g: CleanupGroup) -> [CleanupRow] {
         guard let r = report else { return [] }
         switch g {
         case .matched: return r.matched
+        case .review: return r.needs_review
         case .editLost: return r.edit_lost
         case .missing: return r.missing
         }

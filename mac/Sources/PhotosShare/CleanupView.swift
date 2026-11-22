@@ -32,18 +32,37 @@ struct CleanupView: View {
     // MARK: - Choosing the two libraries
 
     private var pickers: some View {
-        HStack(spacing: 12) {
-            LibraryPicker(title: "Imported from", url: $model.source)
-            Image(systemName: "arrow.right").foregroundStyle(.secondary)
-            LibraryPicker(title: "Into", url: $model.dest)
-            Spacer()
-            Button(model.report == nil ? "Compare" : "Compare Again") {
-                Task { await model.compare() }
+        VStack(spacing: compact ? 12 : 16) {
+            HStack(spacing: 18) {
+                LibraryPicker(title: "Imported from", url: $model.source, compact: compact)
+                Image(systemName: "arrow.right")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                LibraryPicker(title: "Into", url: $model.dest, compact: compact)
             }
+            Button {
+                Task { await model.compare() }
+            } label: {
+                Label(model.report == nil ? "Compare" : "Compare Again",
+                      systemImage: "arrow.triangle.2.circlepath")
+                    .frame(minWidth: 140)
+            }
+            .controlSize(compact ? .regular : .large)
+            .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
             .disabled(!model.canCompare)
         }
-        .padding(14)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
+        .padding(.vertical, compact ? 16 : 28)
+        .animation(.snappy, value: compact)
+    }
+
+    /// Once there are results, the header shrinks so the photos get the space.
+    private var compact: Bool {
+        if case .idle = model.state { return false }
+        if case .failed = model.state { return false }
+        return true
     }
 
     // MARK: - Results
@@ -51,8 +70,13 @@ struct CleanupView: View {
     @ViewBuilder private var content: some View {
         switch model.state {
         case .idle:
-            placeholder("Choose the library you imported from, and the one you imported into, then Compare.",
-                        symbol: "square.on.square")
+            if let s = model.source, let d = model.dest {
+                placeholder("Compare checks which photos from “\(s.deletingPathExtension().lastPathComponent)” are already in “\(d.deletingPathExtension().lastPathComponent)”, so you can safely remove them. Nothing changes until you choose an action.",
+                            symbol: "checkmark.shield")
+            } else {
+                placeholder("Choose the library you imported from, and the one you imported into.",
+                            symbol: "square.on.square")
+            }
         case .comparing:
             VStack(spacing: 10) {
                 ProgressView()
@@ -73,20 +97,20 @@ struct CleanupView: View {
                     SummaryTile(group: g, count: model.rows(g).count, selected: group == g) { group = g }
                 }
             }
-            .padding(14)
+            .padding(.horizontal, 24).padding(.vertical, 16)
 
             if let message = model.message {
                 Label(message.text, systemImage: message.ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
                     .foregroundStyle(message.ok ? .green : .red)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14).padding(.bottom, 8)
+                    .padding(.horizontal, 24).padding(.bottom, 10)
             }
 
             Text(group.explanation + (model.rows(group).isEmpty ? "" : " Click a photo to compare both copies."))
                 .font(.callout).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14).padding(.bottom, 8)
+                .padding(.horizontal, 24).padding(.bottom, 10)
 
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 3)], spacing: 3) {
@@ -104,7 +128,7 @@ struct CleanupView: View {
                         .help(row.name ?? row.uuid)
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 24).padding(.bottom, 16)
             }
             Divider()
             actionBar
@@ -142,7 +166,7 @@ struct CleanupView: View {
                 Spacer()
             }
         }
-        .padding(14)
+        .padding(.horizontal, 24).padding(.vertical, 16)
     }
 
     private func note(_ r: CleanupReport) -> String {
@@ -188,6 +212,7 @@ struct CleanupView: View {
         VStack(spacing: 10) {
             Image(systemName: symbol).font(.system(size: 34)).foregroundStyle(.secondary)
             Text(text).multilineTextAlignment(.center).foregroundStyle(.secondary).textSelection(.enabled)
+                .frame(maxWidth: 520)
         }
         .padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -196,6 +221,7 @@ struct CleanupView: View {
 func color(_ g: CleanupGroup) -> Color {
     switch g {
     case .matched: .green
+    case .review: .purple
     case .editLost: .orange
     case .missing: .red
     }
@@ -226,30 +252,69 @@ struct SummaryTile: View {
 struct LibraryPicker: View {
     let title: String
     @Binding var url: URL?
+    var compact = false
+    @State private var hovering = false
+
+    private var name: String { url?.deletingPathExtension().lastPathComponent ?? "Choose a library…" }
+    private var icon: some View {
+        Image(systemName: url == nil ? "photo.badge.plus" : "photo.stack")
+            .font(.system(size: compact ? 20 : 30))
+            .foregroundStyle(url == nil ? Color.secondary : Color.accentColor)
+    }
+    private var caption: some View {
+        Text(title.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+    }
 
     var body: some View {
-        Button {
-            let panel = NSOpenPanel()
-            panel.canChooseFiles = true
-            panel.canChooseDirectories = false
-            panel.allowsMultipleSelection = false
-            panel.message = "Choose the library you \(title.lowercased())."
-            NSApp.activate(ignoringOtherApps: true)
-            if panel.runModal() == .OK, let u = panel.url {
-                if u.pathExtension == "photoslibrary" { url = u } else {
-                    let a = NSAlert()
-                    a.messageText = "Not a Photos library"
-                    a.informativeText = "“\(u.lastPathComponent)” isn’t a .photoslibrary."
-                    a.runModal()
+        Button(action: choose) {
+            Group {
+                if compact {
+                    HStack(spacing: 10) {
+                        icon
+                        VStack(alignment: .leading, spacing: 1) {
+                            caption
+                            Text(name).font(.headline).lineLimit(1).truncationMode(.middle)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .frame(width: 230, height: 44)
+                } else {
+                    VStack(spacing: 8) {
+                        icon
+                        caption
+                        Text(name).font(.headline)
+                            .foregroundStyle(url == nil ? .secondary : .primary)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                    .frame(width: 220, height: 120)
                 }
             }
-        } label: {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.caption).foregroundStyle(.secondary)
-                Label(url?.deletingPathExtension().lastPathComponent ?? "Choose…", systemImage: "photo.stack")
-                    .lineLimit(1)
-            }
-            .frame(minWidth: 170, alignment: .leading)
+            .padding(.horizontal, 14)
+            .background(RoundedRectangle(cornerRadius: 14)
+                .fill(hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.quaternary.opacity(0.5))))
+            .overlay(RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(url == nil ? Color.secondary.opacity(0.35) : Color.accentColor.opacity(0.6),
+                              style: StrokeStyle(lineWidth: 1.5, dash: url == nil ? [5, 4] : [])))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(url?.path ?? "Choose the library you \(title.lowercased())")
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the library you \(title.lowercased())."
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let u = panel.url else { return }
+        if u.pathExtension == "photoslibrary" { url = u } else {
+            let a = NSAlert()
+            a.messageText = "Not a Photos library"
+            a.informativeText = "“\(u.lastPathComponent)” isn’t a .photoslibrary."
+            a.runModal()
         }
     }
 }
@@ -271,6 +336,10 @@ struct CompareSheet: View {
             Text(row.dest != nil ? "Matched by \(row.how ?? "fingerprint")." :
                     "No matching photo was found in the destination.")
                 + Text(row.edited ? " This photo is edited in the source." : "")
+            if let reason = row.reason {
+                Label(reason, systemImage: "questionmark.circle.fill")
+                    .foregroundStyle(.purple)
+            }
             HStack(alignment: .top, spacing: 14) {
                 side("Source · \(report?.source_name ?? "")", path: row.thumb,
                      caption: [row.name, formatted(row.date)])

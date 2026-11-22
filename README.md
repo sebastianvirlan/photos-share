@@ -25,6 +25,8 @@ The app lives in the menu bar and has two windows:
 
 The app runs this checkout, so keep the repo folder where it is (or rebuild after moving it).
 
+Layout check without clicking around: `$(swift build --package-path mac --show-bin-path)/PhotosShare --snapshot /tmp/shots` renders the Clean Up window to PNGs with sample data.
+
 ## Command line
 
 ```sh
@@ -83,6 +85,11 @@ uv run photos-dedupe "Source.photoslibrary" "Destination.photoslibrary" --mark  
 
 - **Matching:** photos are matched by content fingerprint, or by filename, size and date
   when that fails. Photos edited in the source whose edit didn't come across are left out.
+- **File checks:** every match must also pass these, or it goes to **Needs a look** and is
+  kept:
+  - the destination's original file exists and is exactly the same size;
+  - Live Photo videos and RAW+JPEG files came across;
+  - matches found by filename, size and date have identical SHA-256 checksums.
 - **`--mark`:** opens the source in Photos and puts the verified photos into an album
   "In <destination> – safe to delete". Review it, then press ⌘A, ⌘⌫ and confirm.
 - **Deleting:** the tool never deletes photos itself, and Photos' scripting doesn't allow it.
