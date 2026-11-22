@@ -145,7 +145,7 @@ enum EditSpike {
         guard let id, let a = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject
         else { return "(couldn’t find it afterwards)" }
         let types = PHAssetResource.assetResources(for: a).map { "\($0.type.rawValue)" }.joined(separator: ",")
-        let format = (try? await editingInput(a))?.adjustmentData.map { "\($0.formatIdentifier) \($0.formatVersion)" } ?? "none"
+        let format = (try? await editingInput(a, readRecipe: true))?.adjustmentData.map { "\($0.formatIdentifier) \($0.formatVersion)" } ?? "none"
         return "Resources [\(types)], edit format: \(format)"
     }
 
@@ -189,11 +189,11 @@ enum EditSpike {
         return "\(url.lastPathComponent) \(p[kCGImagePropertyPixelWidth] ?? "?")×\(p[kCGImagePropertyPixelHeight] ?? "?") orientation \(p[kCGImagePropertyOrientation] ?? 1)"
     }
 
-    private static func editingInput(_ asset: PHAsset) async throws -> PHContentEditingInput {
+    private static func editingInput(_ asset: PHAsset, readRecipe: Bool = false) async throws -> PHContentEditingInput {
         try await withCheckedThrowingContinuation { cont in
             let opts = PHContentEditingInputRequestOptions()
             opts.isNetworkAccessAllowed = false
-            opts.canHandleAdjustmentData = { _ in false }
+            opts.canHandleAdjustmentData = { _ in readRecipe }  // true: Photos hands the stored recipe back
             asset.requestContentEditingInput(with: opts) { input, info in
                 if let input { cont.resume(returning: input) }
                 else { cont.resume(throwing: (info[PHContentEditingInputErrorKey] as? Error) ?? Failure("Photos gave no editing input")) }
