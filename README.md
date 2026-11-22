@@ -22,7 +22,8 @@ The app lives in the menu bar and has two windows:
   - Pick the two libraries and see the source as a grid. Photos already in the destination
     are left out.
   - Filter by album, year, photos or videos, and favourites, then select: click, Shift-click for
-    a range, or drag a box (Shift/⌘ adds, Option removes).
+    a range, or drag a box (Shift/⌘ adds, Option removes). Double-click opens a photo large
+    (← → to browse, Space to select); the zoom slider (or ⌘+ / ⌘−) sets the tile size.
   - **When the destination is the System Photo Library** (Photos → Settings → General), edits
     stay editable: the app creates each photo itself from all its parts (original, Live
     video, Photos' edit recipe, edited versions), so crops, adjustments, styles, Clean Up,

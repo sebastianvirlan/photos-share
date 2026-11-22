@@ -33,6 +33,7 @@ struct Thumbnail: View {
     let path: String?
     var maxPixels = 320
     var fill = true
+    var background = true
     @State private var image: NSImage?
     @State private var failed = false
 
@@ -40,7 +41,7 @@ struct Thumbnail: View {
         // The background takes the size the layout offers; the image only draws inside it.
         // (Sized by the image instead, a wide or tall photo set to fill would grow the tile
         // past its square and spill over its neighbours.)
-        Rectangle().fill(.quaternary)
+        Rectangle().fill(background ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
             .overlay {
                 if let image {
                     Image(nsImage: image)
@@ -52,10 +53,38 @@ struct Thumbnail: View {
             }
             .clipped()
             .contentShape(Rectangle())  // clicks land on the tile, not the cropped-off parts
-        .task(id: path) {
+        .task(id: "\(maxPixels):\(path ?? "")") {  // sharper copy when zoomed in
             guard let path else { return }
             image = await ThumbnailCache.shared.image(at: path, maxPixels: maxPixels)
             failed = image == nil
         }
     }
+}
+
+/// Tile size for the photo grids, shared and remembered. ⌘+ / ⌘− work too.
+struct ZoomControl: View {
+    @Binding var size: Double
+    static let range: ClosedRange<Double> = 70...320
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button { size = max(Self.range.lowerBound, size - 40) } label: {
+                Image(systemName: "minus.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut("-", modifiers: .command)
+            .help("Smaller (⌘−)")
+            Slider(value: $size, in: Self.range).frame(width: 110).controlSize(.small)
+            Button { size = min(Self.range.upperBound, size + 40) } label: {
+                Image(systemName: "plus.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut("=", modifiers: .command)
+            .help("Bigger (⌘+)")
+        }
+        .fixedSize()
+    }
+
+    /// Sharp enough for the tile size, without decoding more than needed.
+    static func pixels(for size: Double) -> Int { size > 150 ? 640 : 320 }
 }

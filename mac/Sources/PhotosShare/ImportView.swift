@@ -9,6 +9,8 @@ struct ImportView: View {
     @State private var marqueeBox: CGRect?
     @State private var marqueeBase: Set<String>?
     @State private var marqueeMode: ImportModel.MarqueeMode = .replace
+    @State private var previewing: PreviewTarget?
+    @AppStorage("gridTileSize") private var tileSize = 110.0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,6 +19,7 @@ struct ImportView: View {
             content
         }
         .frame(minWidth: 820, minHeight: 600)
+        .sheet(item: $previewing) { PhotoPreview(model: model, uuid: $0.id) }
         .confirmationDialog(confirmTitle, isPresented: $confirming, titleVisibility: .visible) {
             Button("Import") { model.start() }
             Button("Cancel", role: .cancel) {}
@@ -134,6 +137,7 @@ struct ImportView: View {
             .pickerStyle(.segmented).labelsHidden().frame(width: 190)
             Toggle("♥ Favourites", isOn: $model.favoritesOnly).toggleStyle(.button)
             Spacer()
+            ZoomControl(size: $tileSize)
         }
         .padding(.horizontal, 24).padding(.vertical, 12)
     }
@@ -147,10 +151,11 @@ struct ImportView: View {
                      : "No photos match these filters.", symbol: "checkmark.circle")
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 3)], spacing: 3) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: tileSize), spacing: 3)], spacing: 3) {
                         ForEach(items) { item in
                             ImportTile(item: item, selected: model.selection.contains(item.uuid),
-                                       destName: model.plan?.dest_name ?? "")
+                                       destName: model.plan?.dest_name ?? "",
+                                       maxPixels: ZoomControl.pixels(for: tileSize))
                                 .background(GeometryReader { g in
                                     Color.clear.preference(key: TileFrames.self,
                                                            value: [item.uuid: g.frame(in: .named("grid"))])
@@ -158,6 +163,11 @@ struct ImportView: View {
                                 .onTapGesture {
                                     model.click(item, extendingRange: NSEvent.modifierFlags.contains(.shift))
                                 }
+                                // Both clicks of a double-click toggle (cancelling out), so single
+                                // clicks stay instant; the double-click then opens the photo.
+                                .simultaneousGesture(TapGesture(count: 2).onEnded {
+                                    previewing = PreviewTarget(id: item.uuid)
+                                })
                         }
                     }
                     .padding(.horizontal, 24).padding(.bottom, 16)
@@ -176,7 +186,7 @@ struct ImportView: View {
                         }
                     }
                 }
-                .help("Click to select or deselect. Shift-click selects a range. Drag a box to select; hold Shift or ⌘ to add, Option to remove.")
+                .help("Click to select or deselect, double-click to open. Shift-click selects a range. Drag a box to select; hold Shift or ⌘ to add, Option to remove.")
             }
         }
     }
@@ -342,13 +352,16 @@ private struct TileFrames: PreferenceKey {
     }
 }
 
+struct PreviewTarget: Identifiable { let id: String }
+
 struct ImportTile: View {
     let item: ImportItem
     let selected: Bool
     let destName: String
+    var maxPixels = 320
 
     var body: some View {
-        Thumbnail(path: item.thumb)
+        Thumbnail(path: item.thumb, maxPixels: maxPixels)
             .aspectRatio(1, contentMode: .fit)
             .opacity(item.in_dest ? 0.45 : 1)
             .overlay(alignment: .topTrailing) {

@@ -65,6 +65,7 @@ class Candidate:
     hidden: bool
     albums: list[str]
     in_dest: bool = False
+    original: str | None = None   # for the large preview
 
 
 @dataclass
@@ -100,7 +101,8 @@ def plan(src: Path, dst: Path, include_hidden: bool = False) -> Plan:
             date=p.date.replace(microsecond=0).isoformat() if p.date else "",
             thumb=thumbs.get(p.uuid), movie=bool(p.ismovie), live=bool(p.live_photo),
             favorite=bool(p.favorite), edited=has_real_edit(p), hidden=bool(p.hidden),
-            albums=[a for a in p.albums if a], in_dest=p.uuid in in_dest))
+            albums=[a for a in p.albums if a], in_dest=p.uuid in in_dest,
+            original=str(p.path) if p.path else None))
     return out
 
 

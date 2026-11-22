@@ -185,6 +185,7 @@ def test_plan(monkeypatch, tmp_path):
     assert items["A"]["in_dest"] and not items["B"]["in_dest"]
     assert items["B"]["edited"] and not items["P"]["edited"]  # portrait effect isn't an edit
     assert items["A"]["thumb"] == "/t/a.jpg" and out["albums"] == ["Trip"]
+    assert items["A"]["original"] == "/lib/A.heic"            # for the large preview
     with_hidden = importer.plan(Path("s.photoslibrary"), Path("d.photoslibrary"), True)
     assert "H" in {c.uuid for c in with_hidden.items}
 

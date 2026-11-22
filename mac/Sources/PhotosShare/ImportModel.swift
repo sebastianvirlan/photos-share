@@ -13,6 +13,7 @@ struct ImportItem: Codable, Identifiable, Hashable {
     let hidden: Bool
     let albums: [String]
     let in_dest: Bool
+    var original: String? = nil
     var id: String { uuid }
     var year: String { String(date.prefix(4)) }
 }

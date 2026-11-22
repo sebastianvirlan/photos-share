@@ -5,6 +5,7 @@ struct CleanupView: View {
     @Bindable var model: CleanupModel
     @State private var group: CleanupGroup = .matched
     @State private var comparing: CleanupRow?
+    @AppStorage("gridTileSize") private var tileSize = 110.0
     @State private var confirm: CleanupAction?
 
     var body: some View {
@@ -107,16 +108,19 @@ struct CleanupView: View {
                     .padding(.horizontal, 24).padding(.bottom, 10)
             }
 
-            Text(group.explanation + (model.rows(group).isEmpty ? "" : " Click a photo to compare both copies."))
-                .font(.callout).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 24).padding(.bottom, 10)
+            HStack(alignment: .firstTextBaseline) {
+                Text(group.explanation + (model.rows(group).isEmpty ? "" : " Click a photo to compare both copies."))
+                    .font(.callout).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ZoomControl(size: $tileSize)
+            }
+            .padding(.horizontal, 24).padding(.bottom, 10)
 
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 3)], spacing: 3) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: tileSize), spacing: 3)], spacing: 3) {
                     ForEach(model.rows(group)) { row in
                         Button { comparing = row } label: {
-                            Thumbnail(path: row.thumb)
+                            Thumbnail(path: row.thumb, maxPixels: ZoomControl.pixels(for: tileSize))
                                 .aspectRatio(1, contentMode: .fit)
                                 .overlay(alignment: .topTrailing) {
                                     Image(systemName: group.symbol)

@@ -36,6 +36,8 @@ enum Snapshot {
         keeping.showForSnapshot(system, source: URL(fileURLWithPath: "/Volumes/HDD/iPhone 13 Backup.photoslibrary"),
                                 dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
         render(ImportView(model: keeping).frame(width: 960, height: 640), to: dir, name: "import-keeps-edits")
+        render(PhotoPreview(model: keeping, uuid: system.items[0].uuid).frame(width: 1000, height: 700),
+               to: dir, name: "import-preview")
 
         // ShareView is an AppKit-backed grouped Form, which ImageRenderer can't draw.
         exit(0)
