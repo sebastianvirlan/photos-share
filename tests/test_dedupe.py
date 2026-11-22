@@ -78,6 +78,7 @@ def test_mark_creates_unique_album_in_batches(monkeypatch, tmp_path):
     class Album:
         def add(self, photos):
             calls["added"].append(len(photos))
+            return photos
 
         def spotlight(self):
             calls["spotlit"] = True
@@ -100,15 +101,47 @@ def test_mark_creates_unique_album_in_batches(monkeypatch, tmp_path):
     assert calls["album"] == "Safe (3)" and calls["added"] == [200, 200, 50] and calls["spotlit"]
 
 
-def test_mark_refuses_when_wrong_library_open(monkeypatch, tmp_path):
-    def missing(uuid):
-        raise ValueError("no such photo")
-
-    lib = types.SimpleNamespace(open=lambda p: None)
+def _fake_photoscript(monkeypatch, photo, add=lambda photos: photos):
+    album = types.SimpleNamespace(add=add, spotlight=lambda: None)
+    lib = types.SimpleNamespace(open=lambda p: None, album_names=lambda: [],
+                                create_album=lambda name: album)
     monkeypatch.setitem(sys.modules, "photoscript",
-                        types.SimpleNamespace(PhotosLibrary=lambda: lib, Photo=missing))
-    with pytest.raises(RuntimeError, match="didn't open"):
-        dedupe.mark(tmp_path / "S.photoslibrary", [item("A")], "Safe")
+                        types.SimpleNamespace(PhotosLibrary=lambda: lib, Photo=photo))
+
+
+def test_mark_gives_up_when_library_never_loads(monkeypatch, tmp_path):
+    def missing(uuid):
+        raise ValueError("Invalid photo id")
+    _fake_photoscript(monkeypatch, missing)
+    with pytest.raises(RuntimeError, match="didn’t finish opening"):
+        dedupe.mark(tmp_path / "S.photoslibrary", [item("A")], "Safe", wait=0)
+
+
+def test_mark_waits_while_photos_is_still_loading(monkeypatch, tmp_path):
+    attempts = []
+
+    def slow(uuid):
+        attempts.append(uuid)
+        if len(attempts) < 3:
+            raise ValueError("Invalid photo id")  # library still loading
+        return uuid
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    _fake_photoscript(monkeypatch, slow)
+    assert dedupe.mark(tmp_path / "S.photoslibrary", [item("A")], "Safe", wait=60) == 1
+
+
+def test_mark_explains_missing_automation_permission(monkeypatch, tmp_path):
+    def denied(uuid):
+        raise RuntimeError("Not authorized to send Apple events to Photos. (-1743)")
+    _fake_photoscript(monkeypatch, denied)
+    with pytest.raises(RuntimeError, match="Privacy & Security → Automation"):
+        dedupe.mark(tmp_path / "S.photoslibrary", [item("A")], "Safe", wait=60)
+
+
+def test_mark_reports_partial_album(monkeypatch, tmp_path):
+    _fake_photoscript(monkeypatch, lambda uuid: uuid, add=lambda photos: photos[:1])
+    with pytest.raises(RuntimeError, match="Only 1 of 2"):
+        dedupe.mark(tmp_path / "S.photoslibrary", [item("A"), item("B")], "Safe")
 
 
 def test_cli_rejects_same_or_bad_libraries(tmp_path, capsys):

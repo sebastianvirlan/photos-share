@@ -40,6 +40,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>2</string>
   <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Photos Share asks Photos to open a library and collect photos into an album for you to review.</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>Photos Share deletes photos you've confirmed were imported into another library.</string>
   <key>PSUVPath</key><string>$UV</string>

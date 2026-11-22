@@ -122,26 +122,57 @@ def report(r: Result, src: Path, dst: Path) -> str:
     return "\n".join(lines)
 
 
-def mark(src: Path, items: list[Item], album_name: str) -> int:
-    """Open SOURCE in Photos and put `items` into a new album there. Returns count added."""
+AUTOMATION_HELP = ("macOS didn’t allow controlling Photos. Open System Settings → Privacy & "
+                   "Security → Automation, find Photos Share (or your Terminal), and turn on "
+                   "Photos. Then try again.")
+
+
+def _not_permitted(e: Exception) -> bool:
+    text = str(e)
+    return "-1743" in text or "Not authorized to send Apple events" in text
+
+
+def mark(src: Path, items: list[Item], album_name: str, wait: float = 180) -> int:
+    """Open SOURCE in Photos and put `items` into a new album there. Returns count added.
+
+    Waits (up to `wait` seconds) for Photos to finish loading the library, since a big
+    library on an HDD takes a while, and reports a missing Automation permission clearly.
+    """
+    import time
+
     import photoscript
 
     lib = photoscript.PhotosLibrary()
-    lib.open(str(src))  # quits Photos and reopens it with SOURCE
+    lib.open(str(src))  # quits Photos and reopens it with SOURCE (shell command, no permission)
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            photoscript.Photo(items[0].uuid)   # first Apple Event: needs Automation permission
+            break
+        except Exception as e:  # noqa: BLE001
+            if _not_permitted(e):
+                raise RuntimeError(AUTOMATION_HELP) from e
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"Photos didn’t finish opening “{src.stem}” within {int(wait)} seconds, or "
+                    f"it opened a different library. ({e})") from e
+            time.sleep(3)
     try:
-        photoscript.Photo(items[0].uuid)
+        name, n = album_name, 2
+        while name in lib.album_names():
+            name, n = f"{album_name} ({n})", n + 1
+        album = lib.create_album(name)
+        added = 0
+        for i in range(0, len(items), BATCH):
+            added += len(album.add([photoscript.Photo(it.uuid) for it in items[i:i + BATCH]]))
+        album.spotlight()
     except Exception as e:  # noqa: BLE001
-        raise RuntimeError(f"Photos didn't open “{src.stem}” (or it's still loading); "
-                           "open it manually, then run --mark again.") from e
-    name, n = album_name, 2
-    while name in lib.album_names():
-        name, n = f"{album_name} ({n})", n + 1
-    album = lib.create_album(name)
-    added = 0
-    for i in range(0, len(items), BATCH):
-        album.add([photoscript.Photo(it.uuid) for it in items[i:i + BATCH]])
-        added += len(items[i:i + BATCH])
-    album.spotlight()
+        if _not_permitted(e):
+            raise RuntimeError(AUTOMATION_HELP) from e
+        raise RuntimeError(f"Photos couldn’t create or fill the album: {e}") from e
+    if added != len(items):
+        raise RuntimeError(f"Only {added} of {len(items)} photos were added to “{name}”. Check "
+                           "the album before deleting anything.")
     return added
 
 
