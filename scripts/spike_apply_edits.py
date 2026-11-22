@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 import osxphotos
@@ -25,7 +26,14 @@ from osxphotos.utils import get_system_library_path
 
 from spike_import_edits import is_real_edit
 
-APP = Path("/Applications/Photos Share.app")
+APPS = [Path("/Applications/Photos Share.app"), Path.home() / "Applications/Photos Share.app"]
+
+
+def newest_app() -> Path:
+    found = [a for a in APPS if a.exists()]
+    if not found:
+        sys.exit("Photos Share.app isn’t built yet: run scripts/build-app.sh")
+    return max(found, key=lambda a: (a / "Contents/MacOS/PhotosShare").stat().st_mtime)
 
 
 def main() -> None:
@@ -34,7 +42,7 @@ def main() -> None:
     ap.add_argument("-n", type=int, default=3)
     ap.add_argument("--names")
     ap.add_argument("--album")
-    ap.add_argument("--app", type=Path, default=APP)
+    ap.add_argument("--app", type=Path, default=None)
     args = ap.parse_args()
 
     src = args.source.resolve()
@@ -79,9 +87,12 @@ def main() -> None:
     manifest = Path(tempfile.mkdtemp(prefix="edit-spike-")) / "manifest.json"
     manifest.write_text(json.dumps(entries))
     log = manifest.with_suffix(".json.log")
+    app = args.app or newest_app()
+    built = datetime.fromtimestamp((app / "Contents/MacOS/PhotosShare").stat().st_mtime)
+    print(f"Using {app} (built {built:%Y-%m-%d %H:%M})")
     print("Running Photos Share. It comes to the front: allow Photos access, and allow the edits "
           "if macOS asks (check behind other windows too).\n")
-    proc = subprocess.Popen(["open", "-n", "-W", "-a", str(args.app), "--args", "--apply-edits",
+    proc = subprocess.Popen(["open", "-n", "-W", "-a", str(app), "--args", "--apply-edits",
                              str(manifest)])
     shown = 0
     while True:
@@ -95,7 +106,7 @@ def main() -> None:
             break
         time.sleep(0.5)
     if not lines:
-        print(f"The app didn’t start the spike (no log at {log}). Is {args.app} the new build?")
+        print(f"The app didn’t start the spike (no log at {log}). Is {app} the new build?")
 
 if __name__ == "__main__":
     main()
