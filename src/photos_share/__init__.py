@@ -84,8 +84,8 @@ def _tailscale_name() -> str | None:
         try:
             out = subprocess.run([cli, "status", "--json"], capture_output=True, text=True,
                                  timeout=5).stdout
-            name = json.loads(out)["Self"]["DNSName"].rstrip(".")
-            return name.split(".")[0] if name else None
+            # Full MagicDNS name: the short form doesn't resolve for people you share with.
+            return json.loads(out)["Self"]["DNSName"].rstrip(".") or None
         except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
             continue
     return None
