@@ -6,7 +6,7 @@ from your Mac. Read-only, no uploads, no copies. The library is the source of tr
 ## Mac app (menu bar)
 
 ```sh
-scripts/build-app.sh          # builds ~/Applications/Photos Share.app
+scripts/build-app.sh          # builds Photos Share.app in /Applications and shows it in Finder
 ```
 
 Open **Photos Share** from Applications. It lives in the menu bar:

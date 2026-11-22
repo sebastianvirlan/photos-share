@@ -1,11 +1,19 @@
 #!/bin/sh
 # Builds "Photos Share.app", a menu bar launcher that runs this checkout with uv.
-# Usage: scripts/build-app.sh [destination folder]   (default: ~/Applications)
+# Usage: scripts/build-app.sh [destination folder]
+#   Default: /Applications if writable (it is for admin users), else ~/Applications.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 UV="$(command -v uv || true)"
 [ -n "$UV" ] || { echo "uv not found: brew install uv" >&2; exit 1; }
-DEST="${1:-$HOME/Applications}"
+if [ -n "${1:-}" ]; then
+  DEST="$1"
+elif [ -w /Applications ]; then
+  DEST=/Applications
+else
+  DEST="$HOME/Applications"
+fi
+mkdir -p "$DEST"
 APP="$DEST/Photos Share.app"
 
 rm -rf "$APP"
@@ -31,4 +39,6 @@ exec "$UV" run --project "$REPO" --quiet photos-share-app >> "\$HOME/Library/Log
 SH
 chmod +x "$APP/Contents/MacOS/photos-share"
 echo "Built: $APP"
+echo "Open it from there; it appears as an icon in the menu bar (no Dock icon, no window)."
 echo "Logs:  ~/Library/Logs/photos-share.log"
+[ -z "${NO_REVEAL:-}" ] && open -R "$APP" 2>/dev/null || true   # show it in Finder
