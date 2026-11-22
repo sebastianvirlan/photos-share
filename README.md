@@ -18,6 +18,17 @@ The app lives in the menu bar and has two windows:
 - **Sharing:** choose a library or folder and who can see it (this Mac, Tailscale, or a
   public link with a password). Then set the options: hidden photos, screenshots,
   downloads, video conversion and keep-awake. The viewer password is kept in your Keychain.
+- **Import Between Libraries:** a faster alternative to Photos' own import screen.
+  - Pick the two libraries and see the source as a grid. Photos already in the destination
+    are left out.
+  - Filter by album, year, photos or videos, and favourites, then select.
+  - Photos imports them in batches in the background, without its duplicate prompts.
+  - Favourites, titles, captions, keywords, location, adjusted dates and album membership are
+    carried over, and Live Photo and RAW+JPEG pairs stay together.
+  - Edits made in Photos can't come across editable (Photos ignores `.AAE` recipes, and they
+    break previews). Choose whether to skip edited photos (the default; bring those few
+    across with Photos' own import), import them as they look now, or import both versions.
+  - Afterwards, **Open Clean Up** checks what arrived.
 - **Clean Up After Import:** pick the two libraries, see the three groups as thumbnails,
   compare any photo side by side, then **Move to Trash**, **Delete N Photos** (when the source
   is the System Photo Library) or **Mark in Photos**. Every action re-checks both libraries
@@ -94,6 +105,13 @@ uv run photos-dedupe "Source.photoslibrary" "Destination.photoslibrary" --mark  
   "In <destination> – safe to delete". Review it, then press ⌘A, ⌘⌫ and confirm.
 - **Deleting:** the tool never deletes photos itself, and Photos' scripting doesn't allow it.
   Deleted photos stay in Recently Deleted for 30 days.
+
+### Importing from the command line
+
+```sh
+uv run photos-import "Source.photoslibrary" "Dest.photoslibrary" --plan     # what's new
+uv run photos-import "Source.photoslibrary" "Dest.photoslibrary" --uuids-file ids.txt --edited skip
+```
 
 ## Tests
 

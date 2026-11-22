@@ -12,6 +12,7 @@ dependencies = [
 [project.scripts]
 photos-share = "photos_share:main"
 photos-dedupe = "photos_share.dedupe:main"
+photos-import = "photos_share.importer:main"
 
 [build-system]
 requires = ["uv_build>=0.13.9,<0.14.0"]

@@ -24,6 +24,13 @@ enum Snapshot {
                                 dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
         render(CleanupView(model: results).frame(width: 900, height: 640), to: dir, name: "cleanup-results")
 
+        let imp = ImportModel()
+        render(ImportView(model: imp).frame(width: 960, height: 640), to: dir, name: "import-empty")
+        let loaded = ImportModel()
+        loaded.showForSnapshot(importSample, source: URL(fileURLWithPath: "/Volumes/HDD/iPhone 13 Backup.photoslibrary"),
+                               dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
+        render(ImportView(model: loaded).frame(width: 960, height: 640), to: dir, name: "import-loaded")
+
         // ShareView is an AppKit-backed grouped Form, which ImageRenderer can't draw.
         exit(0)
     }
@@ -38,6 +45,16 @@ enum Snapshot {
         try? png.write(to: dir.appendingPathComponent("\(name).png"))
         print("wrote \(name).png")
     }
+
+    private static let importSample: ImportPlan = {
+        let items = (1...40).map { n in
+            ImportItem(uuid: "I\(n)", name: "IMG_\(2000 + n).HEIC", date: "202\(n % 3 + 1)-0\(n % 9 + 1)-10T10:00:00+01:00",
+                       thumb: nil, movie: n % 9 == 0, live: n % 4 == 0, favorite: n % 6 == 0, edited: n % 7 == 0,
+                       hidden: false, albums: n % 5 == 0 ? ["Holiday"] : [], in_dest: n % 3 == 0)
+        }
+        return ImportPlan(source: "/Volumes/HDD/iPhone 13 Backup.photoslibrary", dest: "/Volumes/HDD/Trips.photoslibrary",
+                          source_name: "iPhone 13 Backup", dest_name: "Trips", albums: ["Holiday", "Family"], items: items)
+    }()
 
     private static let sample: CleanupReport = {
         func row(_ n: Int, reason: String? = nil, dest: Bool = true) -> CleanupRow {

@@ -65,6 +65,7 @@ enum CleanupAction: String { case mark, delete, trash }
 
 @MainActor @Observable
 final class CleanupModel {
+    static let shared = CleanupModel()
     enum State { case idle, comparing, ready, acting(CleanupAction), done(String), failed(String) }
 
     var source: URL?
@@ -78,6 +79,15 @@ final class CleanupModel {
         if case .comparing = state { return false }
         if case .acting = state { return false }
         return source != dest
+    }
+
+    /// Fill in both libraries (e.g. right after an import) and start fresh.
+    func prepare(source: URL?, dest: URL?) {
+        self.source = source
+        self.dest = dest
+        report = nil
+        message = nil
+        state = .idle
     }
 
     /// For `--snapshot` renders only: show a canned report without running the tools.

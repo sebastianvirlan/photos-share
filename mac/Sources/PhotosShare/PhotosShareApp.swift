@@ -5,7 +5,8 @@ import SwiftUI
 struct PhotosShareApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var share = ShareModel.shared
-    @State private var cleanup = CleanupModel()
+    @State private var cleanup = CleanupModel.shared
+    @State private var importer = ImportModel.shared
 
     init() {
         MainActor.assumeIsolated { Snapshot.runIfRequested() }
@@ -22,6 +23,10 @@ struct PhotosShareApp: App {
             ShareView(model: share)
         }
         .windowResizability(.contentSize)
+
+        Window("Import Between Libraries", id: "import") {
+            ImportView(model: importer)
+        }
 
         Window("Clean Up After Import", id: "cleanup") {
             CleanupView(model: cleanup)
@@ -51,6 +56,7 @@ struct MenuContent: View {
                 .disabled(share.path == nil || (share.needsPassword && !share.hasPassword))
         }
         Divider()
+        Button("Import Between Libraries…") { show("import") }
         Button("Clean Up After Import…") { show("cleanup") }
         Divider()
         Button("Quit Photos Share") { NSApp.terminate(nil) }.keyboardShortcut("q")

@@ -49,6 +49,60 @@ enum Tools {
     }
 }
 
+extension Tools {
+    /// Starts a tool and delivers each stdout line on the main actor (for JSON-lines progress).
+    @MainActor
+    static func stream(_ tool: String, _ args: [String],
+                       onLine: @escaping @MainActor (String) -> Void,
+                       onExit: @escaping @MainActor (Int32, String) -> Void) throws -> Process {
+        let p = process(tool, args)
+        let out = Pipe(), err = Pipe()
+        p.standardOutput = out
+        p.standardError = err
+        let lines = LineSplitter(), errBuf = Buffer()
+        out.fileHandleForReading.readabilityHandler = { h in
+            let complete = lines.feed(h.availableData)
+            if !complete.isEmpty { Task { @MainActor in complete.forEach(onLine) } }
+        }
+        err.fileHandleForReading.readabilityHandler = { errBuf.append($0.availableData) }
+        p.terminationHandler = { proc in
+            out.fileHandleForReading.readabilityHandler = nil
+            err.fileHandleForReading.readabilityHandler = nil
+            let rest = lines.feed(out.fileHandleForReading.readDataToEndOfFile()) + lines.flush()
+            errBuf.append(err.fileHandleForReading.readDataToEndOfFile())
+            let code = proc.terminationStatus
+            let stderr = String(decoding: errBuf.data, as: UTF8.self)
+            Task { @MainActor in
+                rest.forEach(onLine)
+                onExit(code, stderr)
+            }
+        }
+        try p.run()
+        return p
+    }
+}
+
+/// Splits a byte stream into complete lines (thread-safe).
+final class LineSplitter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending = ""
+    func feed(_ d: Data) -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        pending += String(decoding: d, as: UTF8.self)
+        var out: [String] = []
+        while let nl = pending.firstIndex(of: "\n") {
+            out.append(String(pending[..<nl]))
+            pending = String(pending[pending.index(after: nl)...])
+        }
+        return out
+    }
+    func flush() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        defer { pending = "" }
+        return pending.isEmpty ? [] : [pending]
+    }
+}
+
 /// Thread-safe byte buffer for pipe output.
 final class Buffer: @unchecked Sendable {
     private let lock = NSLock()
