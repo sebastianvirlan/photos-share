@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
+<title>Photos</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main id="app"></main>
+<div id="viewer" hidden>
+  <div class="v-top">
+    <button class="v-btn" id="v-close" aria-label="Close">✕</button>
+    <div class="v-title"><div id="v-date"></div><div id="v-time"></div></div>
+    <button class="v-btn v-live" id="v-live" hidden>LIVE</button>
+  </div>
+  <div class="v-stage" id="v-stage"></div>
+  <button class="v-nav v-prev" id="v-prev" aria-label="Previous">‹</button>
+  <button class="v-nav v-next" id="v-next" aria-label="Next">›</button>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

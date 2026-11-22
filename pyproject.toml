@@ -1,0 +1,17 @@
+[project]
+name = "photos-share"
+version = "0.1.0"
+description = "Share macOS Photos libraries as a Photos-style web page served from your Mac"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.165.0",
+    "osxphotos>=0.78.1",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+photos-share = "photos_share:main"
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"

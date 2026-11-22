@@ -1,0 +1,113 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from . import media
+from .library import Asset, Collection, Library
+
+STATIC = Path(__file__).parent / "static"
+IMG_CACHE = {"Cache-Control": "private, max-age=604800"}
+
+
+def create_app(col: Collection, video_mode: str) -> FastAPI:
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    converter = media.VideoConverter() if video_mode == "convert" else None
+
+    def lookup(lib_id: str, uuid: str) -> tuple[Library, Asset]:
+        lib = col.get(lib_id)
+        if lib is None or lib.state != "ready":
+            raise HTTPException(404)
+        asset = lib.by_uuid.get(uuid)  # only visible assets; never a client-supplied path
+        if asset is None:
+            raise HTTPException(404)
+        return lib, asset
+
+    @app.get("/")
+    def index():
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+    @app.get("/api/libraries")
+    def libraries():
+        out = []
+        for lib in col.libraries.values():
+            item = {"id": lib.id, "name": lib.name, "state": lib.state}
+            if lib.state == "ready" and lib.assets:
+                item.update(count=len(lib.assets), cover=lib.assets[0].uuid,
+                            first=lib.assets[-1].date, last=lib.assets[0].date)
+            out.append(item)
+        return out
+
+    @app.get("/api/libraries/{lib_id}")
+    def library(lib_id: str):
+        lib = col.get(lib_id)
+        if lib is None:
+            raise HTTPException(404)
+        if lib.state != "ready":
+            lib.ensure_open()
+            code = 500 if lib.state == "error" else 202
+            return JSONResponse({"state": lib.state, "error": lib.error, "name": lib.name},
+                                status_code=code)
+        return {
+            "id": lib.id, "name": lib.name, "state": "ready",
+            "assets": [{"u": a.uuid, "d": a.date, "w": a.width, "h": a.height,
+                        "m": a.is_movie, "l": bool(a.live), "e": bool(a.edited)}
+                       for a in lib.assets],
+            "albums": [{"title": al["title"], "uuids": al["uuids"]} for al in lib.albums],
+        }
+
+    @app.get("/thumb/{lib_id}/{uuid}")
+    def thumb(lib_id: str, uuid: str):
+        lib, asset = lookup(lib_id, uuid)
+        path = media.thumbnail(lib, asset)
+        if path is None:
+            raise HTTPException(404)
+        return FileResponse(path, media_type="image/jpeg", headers=IMG_CACHE)
+
+    @app.get("/photo/{lib_id}/{uuid}")
+    def photo(lib_id: str, uuid: str):
+        lib, asset = lookup(lib_id, uuid)
+        path = media.full_image(lib, asset)
+        if path is None:
+            raise HTTPException(404)
+        return FileResponse(path, media_type="image/jpeg", headers=IMG_CACHE)
+
+    @app.get("/video-status/{lib_id}/{uuid}")
+    def video_status(lib_id: str, uuid: str):
+        lib, asset = lookup(lib_id, uuid)
+        if not asset.is_movie:
+            raise HTTPException(404)
+        if converter is None:
+            return {"state": "ready" if media.video_source(lib, asset) else "error"}
+        return {"state": converter.status(lib, asset)[0]}
+
+    @app.get("/video/{lib_id}/{uuid}")
+    def video(lib_id: str, uuid: str):
+        lib, asset = lookup(lib_id, uuid)
+        if not asset.is_movie:
+            raise HTTPException(404)
+        if converter is None:
+            path = media.video_source(lib, asset)
+        else:
+            state, path = converter.status(lib, asset)
+            if state == "preparing":
+                return JSONResponse({"state": state}, status_code=202)
+        if path is None:
+            raise HTTPException(404)
+        # Served as video/mp4 even for .mov: Safari and Chrome then play HEVC/H.264 alike.
+        return FileResponse(path, media_type="video/mp4")
+
+    @app.get("/live/{lib_id}/{uuid}")
+    def live(lib_id: str, uuid: str):
+        lib, asset = lookup(lib_id, uuid)
+        path = lib.abs(asset.live)
+        if path is None:
+            raise HTTPException(404)
+        return FileResponse(path, media_type="video/mp4", headers=IMG_CACHE)
+
+    return app
