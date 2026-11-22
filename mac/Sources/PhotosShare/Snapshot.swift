@@ -52,6 +52,14 @@ enum Snapshot {
         render(ImportView(model: after).frame(width: 960, height: 640), to: dir, name: "import-result")
         render(PhotoPreview(model: keeping, uuid: system.items[0].uuid).frame(width: 1000, height: 700),
                to: dir, name: "import-preview")
+        // A video in the preview (this crashed once inside SwiftUI's VideoPlayer).
+        var withVideo = system
+        withVideo.items[8].original = "/System/Library/CoreServices/ControlCenter.app/Contents/Resources/BentoGalleryIntroduction.mov"
+        let videoModel = ImportModel()
+        videoModel.showForSnapshot(withVideo, source: nil, dest: nil)
+        videoModel.onlyNew = false
+        render(PhotoPreview(model: videoModel, uuid: withVideo.items[8].uuid).frame(width: 1000, height: 700),
+               to: dir, name: "import-preview-video")
 
         // ShareView is an AppKit-backed grouped Form, which ImageRenderer can't draw.
         exit(0)

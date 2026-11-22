@@ -1,4 +1,3 @@
-import AVKit
 import SwiftUI
 
 /// Large view of one photo from the Import grid (double-click). ← → to move through the
@@ -30,7 +29,7 @@ struct PhotoPreview: View {
         ZStack {
             Color.black
             if item.movie, let path = item.original {
-                VideoPlayer(player: AVPlayer(url: URL(fileURLWithPath: path)))
+                VideoView(url: URL(fileURLWithPath: path))
             } else {
                 // The small preview straight away, the full photo over it once loaded.
                 Thumbnail(path: item.thumb, maxPixels: 640, fill: false, background: false)
