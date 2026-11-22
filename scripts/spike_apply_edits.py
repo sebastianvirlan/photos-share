@@ -57,7 +57,10 @@ def main() -> None:
     for p in chosen:
         plist = p.adjustments.plist if p.adjustments else {}
         if not plist.get("adjustmentData") or not p.path_edited:
-            print(f"- {p.original_filename}: skipped (no recipe or no edited image in SOURCE)")
+            why = [w for w, bad in (("no edit recipe", not plist.get("adjustmentData")),
+                                    ("Photos hasn’t saved an edited image for it", not p.path_edited))
+                   if bad]
+            print(f"- {p.original_filename}: skipped ({'; '.join(why)} in SOURCE)")
             continue
         entries.append({"name": p.original_filename, "date": p.date.timestamp(),
                         "format_id": plist.get("adjustmentFormatIdentifier", "com.apple.photo"),
@@ -69,7 +72,7 @@ def main() -> None:
     if not entries:
         sys.exit("Nothing to apply.")
 
-    print(f"\nThis edits matching photos in the System Photo Library: “{system.stem}”.")
+    print(f"\nThis edits matching photos (replacing any edit they have) in the System Photo Library: “{system.stem}”.")
     if input("Is that your TEST library? Continue? [y/N] ").strip().lower() != "y":
         sys.exit("Cancelled.")
 

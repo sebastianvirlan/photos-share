@@ -60,17 +60,19 @@ enum EditSpike {
 
         say("Read \(all.count) photos in the System Photo Library.")
         for e in entries {
-            let candidates = (byName[e.name.lowercased()] ?? []).filter { a in
+            let sameName = byName[e.name.lowercased()] ?? []
+            let candidates = sameName.filter { a in
                 guard let d = a.creationDate?.timeIntervalSince1970 else { return false }
-                return abs(d - e.date) < 2 && !isEdited(a)
+                return abs(d - e.date) < 2
             }
             if candidates.isEmpty {
-                say("✗ \(e.name): no unedited copy with the same date in the System Photo Library")
+                let dates = sameName.map { "\(Int(($0.creationDate?.timeIntervalSince1970 ?? 0) - e.date))s off" }
+                say("✗ \(e.name): not found with the same date (\(sameName.isEmpty ? "no photo with that name" : "same name, dates " + dates.joined(separator: ", ")))")
                 continue
             }
             for a in candidates {
                 do {
-                    say("… \(e.name): saving the edit (macOS may ask you to allow it)")
+                    say("… \(e.name): saving the edit\(isEdited(a) ? ", replacing the edit it has" : "") (macOS may ask you to allow it)")
                     NSApp.activate(ignoringOtherApps: true)
                     try await apply(e, to: a)
                     say("✓ \(e.name): edit saved (\(e.format_id) \(e.format_version))")
