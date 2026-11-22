@@ -32,6 +32,13 @@ def create_app(col: Collection, video_mode: str) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
+    @app.middleware("http")
+    async def revalidate_static(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"  # pick up app updates on reload
+        return response
+
     @app.get("/api/libraries")
     def libraries():
         out = []

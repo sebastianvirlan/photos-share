@@ -34,9 +34,6 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- routing
 
-addEventListener("hashchange", route);
-route();
-
 async function route() {
   const [, page, id, uuid] = location.hash.split("/");
   if (page !== "l" || !id) { closeViewer(); lib = null; return renderHome(); }
@@ -249,3 +246,7 @@ stage.addEventListener("touchend", e => {
   if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) step(dx < 0 ? 1 : -1);
   else if (dy > 90 && Math.abs(dy) > Math.abs(dx)) exitViewer();
 });
+
+// Start last: route() touches the viewer elements declared above.
+addEventListener("hashchange", route);
+route();
