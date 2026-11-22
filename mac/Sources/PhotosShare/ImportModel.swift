@@ -144,8 +144,37 @@ final class ImportModel {
         }
     }
 
+    /// The last photo clicked: the start of a Shift-click range.
+    private(set) var anchor: String?
+
     func toggle(_ item: ImportItem) {
         if selection.contains(item.uuid) { selection.remove(item.uuid) } else { selection.insert(item.uuid) }
+        anchor = item.uuid
+    }
+
+    /// Click toggles one photo; Shift-click gives everything from the last clicked photo to
+    /// this one the state that last photo has now (selected, or deselected).
+    func click(_ item: ImportItem, extendingRange: Bool) {
+        let shown = visible
+        guard extendingRange, let anchor,
+              let from = shown.firstIndex(where: { $0.uuid == anchor }),
+              let to = shown.firstIndex(where: { $0.uuid == item.uuid }) else {
+            toggle(item)
+            return
+        }
+        let range = shown[min(from, to)...max(from, to)].map(\.uuid)
+        if selection.contains(anchor) { selection.formUnion(range) } else { selection.subtract(range) }
+    }
+
+    enum MarqueeMode { case replace, add, remove }
+
+    /// Selection while dragging a box: `base` is the selection when the drag started.
+    func marquee(base: Set<String>, touched: Set<String>, mode: MarqueeMode) {
+        switch mode {
+        case .replace: selection = touched
+        case .add: selection = base.union(touched)
+        case .remove: selection = base.subtracting(touched)
+        }
     }
     func selectVisible() { selection.formUnion(visible.map(\.uuid)) }
     func deselectVisible() { selection.subtract(visible.map(\.uuid)) }

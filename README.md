@@ -21,7 +21,8 @@ The app lives in the menu bar and has two windows:
 - **Import Between Libraries:** a faster alternative to Photos' own import screen.
   - Pick the two libraries and see the source as a grid. Photos already in the destination
     are left out.
-  - Filter by album, year, photos or videos, and favourites, then select.
+  - Filter by album, year, photos or videos, and favourites, then select: click, Shift-click for
+    a range, or drag a box (Shift/⌘ adds, Option removes).
   - **When the destination is the System Photo Library** (Photos → Settings → General), edits
     stay editable: the app creates each photo itself from all its parts (original, Live
     video, Photos' edit recipe, edited versions), so crops, adjustments, styles, Clean Up,

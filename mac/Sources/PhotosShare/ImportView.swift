@@ -5,6 +5,10 @@ struct ImportView: View {
     @Bindable var model: ImportModel
     @Environment(\.openWindow) private var openWindow
     @State private var confirming = false
+    @State private var tileFrames: [String: CGRect] = [:]
+    @State private var marqueeBox: CGRect?
+    @State private var marqueeBase: Set<String>?
+    @State private var marqueeMode: ImportModel.MarqueeMode = .replace
 
     var body: some View {
         VStack(spacing: 0) {
@@ -147,13 +151,56 @@ struct ImportView: View {
                         ForEach(items) { item in
                             ImportTile(item: item, selected: model.selection.contains(item.uuid),
                                        destName: model.plan?.dest_name ?? "")
-                                .onTapGesture { model.toggle(item) }
+                                .background(GeometryReader { g in
+                                    Color.clear.preference(key: TileFrames.self,
+                                                           value: [item.uuid: g.frame(in: .named("grid"))])
+                                })
+                                .onTapGesture {
+                                    model.click(item, extendingRange: NSEvent.modifierFlags.contains(.shift))
+                                }
                         }
                     }
                     .padding(.horizontal, 24).padding(.bottom, 16)
+                    .contentShape(Rectangle())  // drags can start in the gaps too
+                    .coordinateSpace(name: "grid")
+                    .onPreferenceChange(TileFrames.self) { tileFrames = $0 }
+                    .simultaneousGesture(marqueeDrag)  // also when the drag starts on a tile
+                    .overlay(alignment: .topLeading) {
+                        if let box = marqueeBox {
+                            Rectangle()
+                                .fill(Color.accentColor.opacity(0.15))
+                                .strokeBorder(Color.accentColor, lineWidth: 1)
+                                .frame(width: box.width, height: box.height)
+                                .offset(x: box.minX, y: box.minY)
+                                .allowsHitTesting(false)
+                        }
+                    }
                 }
+                .help("Click to select or deselect. Shift-click selects a range. Drag a box to select; hold Shift or ⌘ to add, Option to remove.")
             }
         }
+    }
+
+    /// Dragging a box selects the photos it touches (Shift/⌘: add to the selection, Option: remove).
+    private var marqueeDrag: some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .named("grid"))
+            .onChanged { v in
+                if marqueeBase == nil {
+                    marqueeBase = model.selection
+                    let flags = NSEvent.modifierFlags
+                    marqueeMode = flags.contains(.option) ? .remove
+                        : (flags.contains(.shift) || flags.contains(.command)) ? .add : .replace
+                }
+                let box = CGRect(x: min(v.startLocation.x, v.location.x), y: min(v.startLocation.y, v.location.y),
+                                 width: abs(v.location.x - v.startLocation.x), height: abs(v.location.y - v.startLocation.y))
+                marqueeBox = box
+                let touched = Set(tileFrames.filter { $0.value.intersects(box) }.keys)
+                model.marquee(base: marqueeBase ?? [], touched: touched, mode: marqueeMode)
+            }
+            .onEnded { _ in
+                marqueeBox = nil
+                marqueeBase = nil
+            }
     }
 
     private var bottomBar: some View {
@@ -284,6 +331,14 @@ struct ImportView: View {
             Text(title).font(.headline)
             Text(detail).foregroundStyle(.secondary)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Where each tile is in the grid, for selecting by dragging a box.
+private struct TileFrames: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { $1 }
     }
 }
 
