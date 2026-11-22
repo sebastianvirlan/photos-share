@@ -69,6 +69,12 @@ struct MenuContent: View {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if let manifest = EditSpike.requested {
+            Task { @MainActor in await EditSpike.run(manifest) }
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         ShareModel.shared.stopAndWait()  // never leave a public link or keep-awake behind
     }
