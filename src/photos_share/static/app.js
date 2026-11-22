@@ -59,6 +59,7 @@ function groupBy(list, key) {
   return out;
 }
 const cover = items => items.find(a => !a.m) || items[0];
+const itemCount = count => `${n(count)} ${count === 1 ? "item" : "items"}`;
 // Sidebar "Media Types" (plus Favourites), in Photos' order: [label, predicate]
 const MEDIA = {
   favorites: ["Favourites", a => a.f],
@@ -112,7 +113,7 @@ async function renderHome() {
       if (l.cover) c.style.backgroundImage = `url("/thumb/${l.id}/${l.cover}")`;
       const years = l.first ? [l.first.slice(0, 4), l.last.slice(0, 4)] : null;
       const meta = !l.available ? "Drive not connected"
-        : l.count ? `${n(l.count)} items` + (years ? ` · ${years[0] === years[1] ? years[0] : years.join("–")}` : "")
+        : l.count ? itemCount(l.count) + (years ? ` · ${years[0] === years[1] ? years[0] : years.join("–")}` : "")
         : l.state === "opening" ? "Opening…" : "Tap to open";
       return h("a", { class: "lib" + (l.available ? "" : " off"), href: `#/l/${l.id}` }, c,
         h("div", { class: "name" }, l.name), h("div", { class: "meta" }, meta));
@@ -283,7 +284,7 @@ function renderPeople(el) {
   const people = lib.people.map((p, i) => ({ ...p, i })).filter(p => p.count);
   el.append(h("div", { class: "people" }, people.map(p =>
     h("a", { class: "person", href: baseHash(["person", p.i]) }, avatar(p),
-      h("div", { class: "name" }, p.name), h("div", { class: "meta" }, `${n(p.count)} items`)))));
+      h("div", { class: "name" }, p.name), h("div", { class: "meta" }, itemCount(p.count))))));
 }
 
 // Crops the face out of a photo with CSS: an <img> scaled and offset inside a circle.
@@ -364,7 +365,7 @@ function toolbar() {
   return h("header", { class: "bar" }, menu,
     h("div", { class: "titles" }, h("h1", {}, scope.title),
       h("span", { class: "sub" }, scope.kind === "people"
-        ? `${n(lib.people.filter(p => p.count).length)} people` : `${n(scope.list.length)} items`)),
+        ? `${n(lib.people.filter(p => p.count).length)} people` : itemCount(scope.list.length))),
     h("div", { class: "spacer" }), seg, zoomEl);
 }
 
@@ -381,14 +382,14 @@ function goTo(view, key) {
 
 function renderYears(el) {
   el.append(h("div", { class: "cards years" }, groupBy(scope.list, a => a.d.slice(0, 4)).map(g =>
-    card(g.items, g.key, `${n(g.items.length)} items`, () => goTo("months", g.key), "big"))));
+    card(g.items, g.key, itemCount(g.items.length), () => goTo("months", g.key), "big"))));
 }
 
 function renderMonths(el) {
   for (const y of groupBy(scope.list, a => a.d.slice(0, 4))) {
     el.append(h("section", { class: "group", "data-key": y.key }, h("h2", {}, y.key),
       h("div", { class: "cards months" }, groupBy(y.items, a => a.d.slice(0, 7)).map(m =>
-        card(m.items, fmt(m.key, { month: "long" }), `${n(m.items.length)} items`,
+        card(m.items, fmt(m.key, { month: "long" }), itemCount(m.items.length),
           () => goTo("days", m.key), "")))));
   }
 }
@@ -422,6 +423,7 @@ function tile(a) {
 
 const viewer = $("#viewer"), stage = $("#v-stage"), liveBtn = $("#v-live");
 const prevBtn = $("#v-prev"), nextBtn = $("#v-next"), dl = $("#v-download");
+const dlOrig = $("#v-download-orig");
 
 function openViewer(uuid) {
   const i = scope.pos.get(uuid);
@@ -438,8 +440,12 @@ function openViewer(uuid) {
   nextBtn.disabled = i === scope.list.length - 1;
   liveBtn.hidden = !a.l;
   liveBtn.classList.remove("on");
+  // ↓ gives the photo as shown (with its edits); edited ones also offer the original.
   dl.hidden = !lib.downloads;
-  dl.href = `/original/${lib.id}/${a.u}`;
+  dl.href = `/download/${lib.id}/${a.u}`;
+  dl.title = a.e ? "Download with edits" : "Download";
+  dlOrig.hidden = !lib.downloads || !a.e;
+  dlOrig.href = `/original/${lib.id}/${a.u}`;
 
   if (a.m) showVideo(a, thumbUrl(a));
   else {

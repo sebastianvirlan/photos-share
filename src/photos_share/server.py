@@ -169,6 +169,23 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
             raise HTTPException(404)
         return FileResponse(path, filename=asset.filename or path.name)
 
+    @app.get("/download/{lib_id}/{uuid}")
+    def download(lib_id: str, uuid: str):
+        """The photo as it looks: with its edits if it has any (Photos' own rendered copy),
+        otherwise the original."""
+        if not downloads:
+            raise HTTPException(404)
+        lib, asset = lookup(lib_id, uuid)
+        path = lib.abs(asset.edited) or lib.abs(asset.original)
+        if path is None:
+            raise HTTPException(404)
+        stem = Path(asset.filename).stem if asset.filename else path.stem
+        if asset.edited and lib.abs(asset.edited):
+            name = f"{stem} (edited){path.suffix.lower()}"
+        else:
+            name = asset.filename or path.name
+        return FileResponse(path, filename=name)
+
     return app
 
 

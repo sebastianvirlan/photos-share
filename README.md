@@ -66,7 +66,7 @@ uv run photos-share "/Volumes/My Passport for Mac/Photolibraries" --tailscale
 | `--hidden` | Include Photos' Hidden album, shown only under **Hidden** (excluded by default) |
 | `--screenshots` | Include screenshots and screen recordings (hidden by default) |
 | `--video original\|convert` | Stream originals (default; fine for iPhone/Mac) or convert to 1080p H.264 |
-| `--downloads` | Show a button to download original files (off by default) |
+| `--downloads` | Show download buttons: ↓ gives the photo as shown (with its edits), and edited photos also offer the Original (off by default) |
 | `--password` | Require a password (prompted at start, or `PHOTOS_SHARE_PASSWORD`) |
 | `--tailscale` | Listen only on this Mac's Tailscale address; viewers need the Tailscale app |
 | `--funnel` | Public `https://…ts.net` link via Tailscale Funnel; no app needed; password required |

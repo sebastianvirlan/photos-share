@@ -46,7 +46,7 @@ struct ShareView: View {
                     Text("Shown only under “Hidden”, as in Photos.")
                 }
                 Toggle("Show screenshots", isOn: $model.screenshots)
-                Toggle("Allow downloading originals", isOn: $model.downloads)
+                Toggle("Allow downloads (with edits, or the original)", isOn: $model.downloads)
                 Toggle("Convert videos for any browser", isOn: $model.convertVideo)
                 Toggle("Keep this Mac awake while sharing", isOn: $model.keepAwake)
             }

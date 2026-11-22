@@ -86,6 +86,18 @@ def test_downloads_use_original_filename(make_client, fake_id):
     assert 'filename="IMG_0001.JPG"' in r.headers["content-disposition"]
 
 
+def test_download_gives_the_edited_version_when_there_is_one(make_client, fake_id):
+    client, _ = make_client(downloads=True)
+    r = client.get(f"/download/{fake_id}/P2")           # edited
+    assert r.status_code == 200
+    from urllib.parse import unquote
+    assert unquote(r.headers["content-disposition"]).endswith("P2_edited (edited).jpeg")
+    r = client.get(f"/download/{fake_id}/P1")           # not edited: the original
+    assert 'filename="IMG_0001.JPG"' in r.headers["content-disposition"]
+    off, _ = make_client()
+    assert off.get(f"/download/{fake_id}/P1").status_code == 404
+
+
 def test_screenshots_option(make_client, fake_id):
     client, _ = make_client(screenshots=True)
     assert client.get(f"/thumb/{fake_id}/SS").status_code == 200
