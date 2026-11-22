@@ -151,7 +151,7 @@ def resources(p) -> list[dict]:
         r.append({"type": "fullSizeVideo" if p.ismovie else "fullSizePhoto", "path": edited_image(p)})
         if p.live_photo and (v := edited_live_video(p)):
             r.append({"type": "fullSizePairedVideo", "path": v, "optional": True})
-    return r
+    return [{**x, "path": str(x["path"])} for x in r]  # osxphotos gives some paths as Path
 
 
 # ---- checking the result ---------------------------------------------------------------
