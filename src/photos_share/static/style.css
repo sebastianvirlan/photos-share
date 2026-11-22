@@ -153,3 +153,29 @@ a.v-btn { display: inline-flex; align-items: center; justify-content: center; }
   .cards.years { grid-template-columns: 1fr; }
   .cards.months { grid-template-columns: repeat(2, 1fr); gap: 8px; }
 }
+
+/* ---- favourites badge ---- */
+.badge.fav { left: 6px; bottom: 4px; font-size: 13px; }
+
+/* ---- people ---- */
+.people { display: grid; gap: 22px 14px; padding: 20px 16px 40px; text-align: center;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+.person .name { margin-top: 8px; font-weight: 600; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.person .meta { color: var(--muted); font-size: 12px; }
+.avatar { position: relative; width: 100%; max-width: 150px; margin: 0 auto; aspect-ratio: 1;
+  border-radius: 50%; overflow: hidden; background: var(--tile); display: grid; place-items: center;
+  font-size: 40px; font-weight: 600; color: var(--muted); }
+.avatar img { position: absolute; max-width: none; }
+.person:hover .avatar { filter: brightness(.94); }
+
+/* ---- places ---- */
+.map { height: calc(100vh - 58px); height: calc(100dvh - 58px); background: var(--tile); }
+.map .leaflet-control-attribution { font-size: 10px; }
+.pin { border: 0 !important; background: none !important; }
+.pin img { width: 52px; height: 52px; object-fit: cover; border-radius: 8px; border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .35); display: block; }
+.pin span { position: absolute; top: -8px; right: -8px; min-width: 22px; height: 22px; padding: 0 6px;
+  border-radius: 11px; background: var(--accent); color: #fff; font: 600 11px/22px -apple-system, sans-serif;
+  text-align: center; box-shadow: 0 1px 4px rgba(0, 0, 0, .3); }
+@media (max-width: 800px) { .map { height: calc(100dvh - 100px); } .people { grid-template-columns: repeat(3, 1fr); } }

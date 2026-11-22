@@ -105,10 +105,9 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
         return {
             "id": lib.id, "name": lib.name, "state": "ready",
             "available": lib.available, "downloads": downloads,
-            "assets": [{"u": a.uuid, "d": a.date, "w": a.width, "h": a.height,
-                        "m": a.is_movie, "l": bool(a.live), "e": bool(a.edited)}
-                       for a in lib.assets],
+            "assets": [_asset_json(a) for a in lib.assets],
             "albums": [{"title": al["title"], "uuids": al["uuids"]} for al in lib.albums],
+            "people": _people_json(lib),
         }
 
     @app.get("/thumb/{lib_id}/{uuid}")
@@ -171,3 +170,32 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
         return FileResponse(path, filename=asset.filename or path.name)
 
     return app
+
+
+def _asset_json(a: Asset) -> dict:
+    """Compact per-asset payload; optional keys are omitted when empty."""
+    out = {"u": a.uuid, "d": a.date, "w": a.width, "h": a.height,
+           "m": a.is_movie, "l": bool(a.live), "e": bool(a.edited)}
+    if a.favorite:
+        out["f"] = True
+    if a.kinds:
+        out["k"] = a.kinds
+    if a.is_screenshot:
+        out["ss"] = True
+    if a.lat is not None and a.lon is not None and (a.lat or a.lon):
+        out["g"] = [round(a.lat, 5), round(a.lon, 5)]
+    if a.place:
+        out["pl"] = a.place
+    if a.persons:
+        out["p"] = list(a.persons)
+    return out
+
+
+def _people_json(lib: Library) -> list[dict]:
+    counts = [0] * len(lib.people)
+    for a in lib.assets:
+        for i in a.persons:
+            if i < len(counts):
+                counts[i] += 1
+    return [{"name": p["name"], "face": p["face"], "count": c}
+            for p, c in zip(lib.people, counts)]

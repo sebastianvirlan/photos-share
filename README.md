@@ -3,7 +3,21 @@
 Share macOS Photos libraries (e.g. on an external drive) as a Photos-style web page served
 from your Mac. Read-only, no uploads, no copies. The library is the source of truth.
 
-## Usage
+## Mac app (menu bar)
+
+```sh
+scripts/build-app.sh          # builds ~/Applications/Photos Share.app
+```
+
+Open **Photos Share** from Applications. It lives in the menu bar:
+**Choose Library or Folder…** → **Who can see it** (this Mac / Tailscale / public link) →
+**Start Sharing**. The link is copied automatically. Settings are remembered, and the
+viewer password is kept in your Keychain. Logs go to `~/Library/Logs/photos-share.log`.
+
+The app runs this checkout via `uv`, so keep the repo folder where it is (or rebuild after
+moving it).
+
+## Command line
 
 ```sh
 uv run photos-share "/Volumes/My Passport for Mac/Photolibraries" --tailscale
@@ -22,6 +36,9 @@ uv run photos-share "/Volumes/My Passport for Mac/Photolibraries" --tailscale
 | `--host`, `--port` | Bind address (default `127.0.0.1`) and port (default `8080`) |
 
 Hidden and Recently Deleted photos are never shared.
+
+The web page mirrors Photos: Library (Years / Months / Days / All Photos), Favourites, People,
+Places (map; needs internet for map tiles), Media Types and Albums.
 
 ### Sharing without the Tailscale app (Funnel)
 

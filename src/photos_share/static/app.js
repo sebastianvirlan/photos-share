@@ -3,6 +3,9 @@
 //   #/                              libraries
 //   #/l/<lib>[/v/<view>]            library: years | months | days | all
 //   #/l/<lib>/a/<n>                 album n
+//   #/l/<lib>/m/<type>              favourites / media type (see MEDIA)
+//   #/l/<lib>/people, /person/<n>   people, one person's photos
+//   #/l/<lib>/places                map
 //   …/p/<uuid>                      viewer over whichever of the above
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -55,6 +58,18 @@ function groupBy(list, key) {
   return out;
 }
 const cover = items => items.find(a => !a.m) || items[0];
+// Sidebar "Media Types" (plus Favourites), in Photos' order: [label, predicate]
+const MEDIA = {
+  favorites: ["Favourites", a => a.f],
+  videos: ["Videos", a => a.m],
+  selfies: ["Selfies", a => a.k?.includes("s")],
+  live: ["Live Photos", a => a.l],
+  portrait: ["Portrait", a => a.k?.includes("p")],
+  panoramas: ["Panoramas", a => a.k?.includes("n")],
+  slomo: ["Slo-mo", a => a.k?.includes("o")],
+  timelapse: ["Time-lapse", a => a.k?.includes("t")],
+  screenshots: ["Screenshots", a => a.ss],
+};
 const thumbUrl = a => `/thumb/${lib.id}/${a.u}`;
 
 // ---------------------------------------------------------------- routing
@@ -140,30 +155,49 @@ function simpleBar(title) {
 }
 
 function renderScope(base) {
+  const key = base.join("/");
   if (base[0] === "a" && lib.albums[+base[1]]) {
     const al = lib.albums[+base[1]];
     const list = al.uuids.map(u => lib.index.get(u)).filter(Boolean);
-    scope = { key: base.join("/"), base, title: al.title, list, album: +base[1] };
+    scope = { key, base, title: al.title, list, album: +base[1], kind: "album" };
+  } else if (base[0] === "m" && MEDIA[base[1]]) {
+    const [label, pred] = MEDIA[base[1]];
+    scope = { key, base, title: label, list: lib.assets.filter(pred), kind: "media", media: base[1] };
+  } else if (base[0] === "people") {
+    scope = { key, base, title: "People", list: [], kind: "people" };
+  } else if (base[0] === "person" && lib.people[+base[1]]) {
+    const i = +base[1];
+    scope = { key, base, title: lib.people[i].name, list: lib.assets.filter(a => a.p?.includes(i)),
+      kind: "person", person: i };
+  } else if (base[0] === "places") {
+    scope = { key, base, title: "Places", list: lib.assets.filter(a => a.g), kind: "places" };
   } else {
     let view = base[0] === "v" && VIEWS[base[1]] ? base[1] : store("view") || "all";
     if (!VIEWS[view]) view = "all";
     store("view", view);
     base = ["v", view];
-    scope = { key: base.join("/"), base, title: "Library", list: lib.assets, view };
+    scope = { key: base.join("/"), base, title: "Library", list: lib.assets, view, kind: "library" };
     if (location.hash.split("/p/")[0] !== baseHash(base)) {
       const uuid = parseHash()?.uuid;
       history.replaceState(null, "", baseHash(base) + (uuid ? `/p/${uuid}` : ""));
     }
   }
   scope.pos = new Map(scope.list.map((a, i) => [a.u, i]));
-  document.title = scope.album != null ? `${scope.title} – ${lib.name}` : lib.name;
+  document.title = scope.kind !== "library" ? `${scope.title} – ${lib.name}` : lib.name;
 
   const content = h("div", { class: "content" });
+  const byMonth = () => renderGrouped(content, a => a.d.slice(0, 7), fmtMonth);
   if (scope.view === "years") renderYears(content);
   else if (scope.view === "months") renderMonths(content);
   else if (scope.view === "days") renderGrouped(content, a => a.d.slice(0, 10), fmtDay);
-  else if (scope.view === "all") renderGrouped(content, a => a.d.slice(0, 7), fmtMonth);
+  else if (scope.view === "all") byMonth();
+  else if (scope.kind === "media" || scope.kind === "person") byMonth();
+  else if (scope.kind === "people") renderPeople(content);
+  else if (scope.kind === "places") renderPlaces(content);
   else renderAlbum(content);
+  if (!scope.list.length && scope.kind !== "people" && scope.kind !== "album") {
+    content.append(h("div", { class: "center" }, "Nothing here."));
+  }
 
   app.replaceChildren(h("div", { class: "layout" }, sidebar(),
     h("div", { class: "scrim", onclick: () => document.body.classList.remove("drawer") }),
@@ -179,19 +213,95 @@ function renderScope(base) {
 function sidebar() {
   const item = (href, label, count, active) => h("a", { class: "nav" + (active ? " active" : ""), href },
     h("span", {}, label), count != null ? h("span", { class: "count" }, n(count)) : null);
+  const media = Object.entries(MEDIA).filter(([k]) => k !== "favorites")
+    .map(([k, [label, pred]]) => [k, label, lib.assets.filter(pred).length]).filter(m => m[2]);
+  const favs = lib.assets.filter(MEDIA.favorites[1]).length;
+  const people = lib.people.filter(p => p.count).length;
+  const places = lib.assets.filter(a => a.g).length;
   return h("aside", { class: "sidebar" },
     libCount > 1 ? h("a", { class: "back", href: "#/" }, "‹ Libraries") : null,
     h("div", { class: "lib-name" }, lib.name),
     h("div", { class: "section" }, "Library"),
-    item(baseHash(["v", store("view") || "all"]), "Photos", lib.assets.length, scope.album == null),
+    item(baseHash(["v", store("view") || "all"]), "Photos", lib.assets.length, scope.kind === "library"),
+    favs ? item(baseHash(["m", "favorites"]), "♥ Favourites", favs, scope.media === "favorites") : null,
+    people ? item(baseHash(["people"]), "People", people,
+      scope.kind === "people" || scope.kind === "person") : null,
+    places ? item(baseHash(["places"]), "Places", places, scope.kind === "places") : null,
+    media.length ? h("div", { class: "section" }, "Media Types") : null,
+    media.map(([k, label, c]) => item(baseHash(["m", k]), label, c, scope.media === k)),
     lib.albums.length ? h("div", { class: "section" }, "Albums") : null,
     lib.albums.map((al, i) => item(baseHash(["a", i]), al.title, al.uuids.length, scope.album === i)));
+}
+
+// ---------------------------------------------------------------- people
+
+function renderPeople(el) {
+  const people = lib.people.map((p, i) => ({ ...p, i })).filter(p => p.count);
+  el.append(h("div", { class: "people" }, people.map(p =>
+    h("a", { class: "person", href: baseHash(["person", p.i]) }, avatar(p),
+      h("div", { class: "name" }, p.name), h("div", { class: "meta" }, `${n(p.count)} items`)))));
+}
+
+// Crops the face out of a photo with CSS: an <img> scaled and offset inside a circle.
+function avatar(p) {
+  const box = h("div", { class: "avatar" });
+  const f = p.face, a = f && lib.index.get(f.u);
+  if (!a || !a.w || !a.h) { box.textContent = p.name.slice(0, 1); return box; }
+  const side = Math.max(f.s * 1.7, 0.02) * Math.max(a.w, a.h); // face plus some margin, in px
+  const w = a.w / side, hh = a.h / side;                       // image size in avatar widths
+  const src = side / Math.max(a.w, a.h) * 640 >= 140 ? thumbUrl(a) : `/photo/${lib.id}/${a.u}`;
+  box.append(h("img", { src, alt: "", loading: "lazy", style:
+    `width:${w * 100}%;height:${hh * 100}%;left:${(0.5 - f.x * w) * 100}%;top:${(0.5 - f.y * hh) * 100}%` }));
+  return box;
+}
+
+// ---------------------------------------------------------------- places
+
+let leaflet = null;
+function loadLeaflet() {
+  const base = "https://cdnjs.cloudflare.com/ajax/libs";
+  const css = href => document.head.append(h("link", { rel: "stylesheet", href }));
+  const js = src => new Promise((ok, fail) =>
+    document.head.append(h("script", { src, onload: ok, onerror: fail })));
+  return leaflet ??= (async () => {
+    css(`${base}/leaflet/1.9.4/leaflet.min.css`);
+    css(`${base}/leaflet.markercluster/1.5.3/MarkerCluster.min.css`);
+    await js(`${base}/leaflet/1.9.4/leaflet.min.js`);
+    await js(`${base}/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js`);
+  })();
+}
+
+async function renderPlaces(el) {
+  const box = h("div", { class: "map" });
+  el.append(box);
+  if (!scope.list.length) return;
+  try { await loadLeaflet(); } catch {
+    box.replaceChildren(h("div", { class: "center" }, "The map couldn’t load (no internet?)."));
+    return;
+  }
+  if (!box.isConnected) return;
+  const map = L.map(box, { worldCopyJump: true });
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
+  const pin = (a, count) => L.divIcon({ className: "pin", iconSize: [52, 52], iconAnchor: [26, 26],
+    html: `<img src="${thumbUrl(a)}" alt="">` + (count > 1 ? `<span>${n(count)}</span>` : "") });
+  const cluster = L.markerClusterGroup({ chunkedLoading: true, showCoverageOnHover: false,
+    maxClusterRadius: 60, iconCreateFunction: c => {
+      const ms = c.getAllChildMarkers();
+      return pin(ms.reduce((best, m) => m.options.asset.d > best.d ? m.options.asset : best,
+        ms[0].options.asset), c.getChildCount());
+    } });
+  cluster.addLayers(scope.list.map(a => L.marker(a.g, { icon: pin(a, 1), asset: a, title: a.pl || "" })
+    .on("click", () => { viewerPushed = true; location.hash = viewerHash(a.u); })));
+  map.addLayer(cluster);
+  map.fitBounds(cluster.getBounds(), { padding: [30, 30], maxZoom: 12 });
 }
 
 function toolbar() {
   const menu = h("button", { class: "menu", "aria-label": "Albums",
     onclick: () => document.body.classList.toggle("drawer") }, "☰");
-  const grid = scope.view !== "years" && scope.view !== "months";
+  const grid = scope.view !== "years" && scope.view !== "months" &&
+    scope.kind !== "people" && scope.kind !== "places";
   let zoomEl = null;
   if (grid) {
     const out = h("button", { "aria-label": "Smaller", onclick: () => setZoom(-1) }, "−");
@@ -209,7 +319,8 @@ function toolbar() {
     h("a", { href: baseHash(["v", k]), class: k === scope.view ? "on" : "" }, label))) : null;
   return h("header", { class: "bar" }, menu,
     h("div", { class: "titles" }, h("h1", {}, scope.title),
-      h("span", { class: "sub" }, `${n(scope.list.length)} items`)),
+      h("span", { class: "sub" }, scope.kind === "people"
+        ? `${n(lib.people.filter(p => p.count).length)} people` : `${n(scope.list.length)} items`)),
     h("div", { class: "spacer" }), seg, zoomEl);
 }
 
@@ -259,7 +370,8 @@ function tile(a) {
   return h("a", { class: "tile", href: viewerHash(a.u), onclick: () => { viewerPushed = true; } },
     h("img", { src: thumbUrl(a), loading: "lazy", decoding: "async", alt: "" }),
     a.m ? h("span", { class: "badge play" }, "▶") : null,
-    a.l ? h("span", { class: "badge live" }, "LIVE") : null);
+    a.l ? h("span", { class: "badge live" }, "LIVE") : null,
+    a.f ? h("span", { class: "badge fav" }, "♥") : null);
 }
 
 // ---------------------------------------------------------------- viewer
@@ -275,7 +387,9 @@ function openViewer(uuid) {
   viewer.hidden = false;
   document.body.classList.add("noscroll");
   $("#v-date").textContent = fmtDay(a.d);
-  $("#v-time").textContent = a.d.slice(11, 16) + (a.e ? " · Edited" : "");
+  $("#v-time").textContent = [a.f ? "♥" : null, a.d.slice(11, 16), a.pl, a.e ? "Edited" : null,
+    a.p?.length ? a.p.map(i => lib.people[i]?.name).filter(Boolean).join(", ") : null]
+    .filter(Boolean).join(" · ");
   prevBtn.disabled = i === 0;
   nextBtn.disabled = i === scope.list.length - 1;
   liveBtn.hidden = !a.l;

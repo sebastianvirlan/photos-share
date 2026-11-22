@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CACHE_ROOT = Path.home() / "Library" / "Caches" / "photos-share"
-INDEX_VERSION = 2
+INDEX_VERSION = 3
 log = logging.getLogger("photos_share")
 
 # Opening a library reads a large DB from a spinning disk; do one at a time.
@@ -35,6 +35,16 @@ class Asset:
     edited: str | None
     live: str | None  # paired video of a Live Photo
     filename: str | None  # original filename, e.g. IMG_1234.HEIC
+    favorite: bool = False
+    kinds: str = ""  # media-type letters, see KINDS
+    lat: float | None = None
+    lon: float | None = None
+    place: str | None = None  # e.g. "Bucharest, Romania"
+    persons: tuple[int, ...] = ()  # indexes into Library.people
+
+
+# One letter per media type, so the per-asset payload stays small.
+KINDS = {"s": "selfie", "n": "panorama", "p": "portrait", "o": "slow_mo", "t": "time_lapse"}
 
 
 @dataclass
@@ -52,6 +62,7 @@ class Library:
     assets: list[Asset] = field(default_factory=list)  # visible only, newest first
     by_uuid: dict[str, Asset] = field(default_factory=dict)
     albums: list[dict] = field(default_factory=list)
+    people: list[dict] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self):
@@ -115,11 +126,28 @@ class Library:
         fingerprint = self._fingerprint()  # before reading, so a concurrent change re-indexes
         db = osxphotos.PhotosDB(dbfile=str(self.path), _skip_searchinfo=True)
         rel = self._relative
+
+        # Named people, most photographed first, each with a face to use as their avatar.
+        people, person_index = [], {}
+        named = [pi for pi in db.person_info
+                 if pi.name and not pi.name.startswith("_UNKNOWN") and pi.facecount]
+        for pi in sorted(named, key=lambda pi: (not pi.favorite, -pi.facecount)):
+            person_index[pi.uuid] = len(people)
+            people.append({"name": pi.name, "face": _avatar(pi)})
+
         assets = []
         for p in db.photos():  # excludes Recently Deleted
             if p.hidden:
                 continue
+            lat, lon = p.location if p.location else (None, None)
+            persons = sorted({person_index[f.person_info.uuid] for f in p.face_info
+                              if f.person_info and f.person_info.uuid in person_index})
             assets.append({
+                "favorite": bool(p.favorite),
+                "kinds": "".join(k for k, attr in KINDS.items() if getattr(p, attr, False)),
+                "lat": lat, "lon": lon,
+                "place": _place_name(p.place),
+                "persons": persons,
                 "uuid": p.uuid,
                 "date": p.date.isoformat(),
                 "width": p.width or 0,
@@ -136,7 +164,7 @@ class Library:
             for a in db.album_info if a.title
         ]
         data = {"version": INDEX_VERSION, "fingerprint": fingerprint,
-                "assets": assets, "albums": albums}
+                "assets": assets, "albums": albums, "people": people}
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         tmp = self.cache_dir / "index.json.tmp"
         tmp.write_text(json.dumps(data))
@@ -152,7 +180,8 @@ class Library:
             return p  # referenced file outside the library
 
     def _apply(self, data: dict) -> None:
-        all_assets = [Asset(**a) for a in data["assets"]]
+        all_assets = [Asset(**{**a, "persons": tuple(a.get("persons", ()))})
+                      for a in data["assets"]]
         visible = [a for a in all_assets
                    if self.options.show_screenshots or not a.is_screenshot]
         visible.sort(key=lambda a: a.date, reverse=True)
@@ -162,7 +191,11 @@ class Library:
             uuids = [u for u in al["uuids"] if u in by_uuid]
             if uuids:
                 albums.append({"title": al["title"], "uuids": uuids})
-        self.assets, self.by_uuid, self.albums = visible, by_uuid, albums
+        # Keep every person (indexes in assets refer to this list); the UI hides people
+        # with no visible photos, and avatars on hidden photos are dropped here.
+        people = [dict(p, face=p["face"] if p["face"] and p["face"]["u"] in by_uuid else None)
+                  for p in data.get("people", [])]
+        self.assets, self.by_uuid, self.albums, self.people = visible, by_uuid, albums, people
         self.state = "ready"
 
     # ---- file lookup (server-side only) ------------------------------------
@@ -185,6 +218,45 @@ class Library:
             except FileNotFoundError:
                 continue
         return sorted(found, key=lambda p: p.stat().st_size, reverse=True)
+
+
+def _avatar(person) -> dict | None:
+    """The person's key face as {u: photo uuid, x, y: centre, s: size}, normalised to 0–1.
+
+    x/y are fractions of the photo's displayed width/height; s is the face diameter as a
+    fraction of the photo's longer side. The browser crops with CSS, so no image work here.
+    """
+    candidates = []
+    if person.keyphoto:
+        candidates += [f for f in person.keyphoto.face_info
+                       if f.person_info and f.person_info.uuid == person.uuid]
+    candidates += person.face_info[:20]
+    for face in candidates:
+        photo = face.photo
+        w, h = photo.width, photo.height
+        if not (w and h) or photo.hidden or photo.intrash:
+            continue
+        (x0, y0), (x1, y1) = face.face_rect
+        return {"u": photo.uuid, "x": round((x0 + x1) / 2 / w, 4),
+                "y": round((y0 + y1) / 2 / h, 4), "s": round(face.size, 4)}
+    return None
+
+
+def _place_name(place) -> str | None:
+    """Short, human place name: 'City, Country' when available."""
+    if not place:
+        return None
+    try:
+        names = place.names
+        city = (names.city or names.sub_administrative_area or names.additional_city_info
+                or names.state_province or [None])[0]
+        country = (names.country or [None])[0]
+        parts = [p for p in (city, country) if p]
+        if parts:
+            return ", ".join(dict.fromkeys(parts))
+    except AttributeError:
+        pass
+    return place.name
 
 
 class Collection:

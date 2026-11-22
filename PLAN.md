@@ -68,7 +68,15 @@ Press Ctrl+C to stop sharing.
    on hovering over LIVE; optional `--downloads`.
 3. ✅ **Drive unplugged:** the library shows as "Drive not connected". Already-viewed photos still
    load from the cache, and everything comes back when the drive is plugged in again.
-4. **Later, if needed:** a small Mac app with a "Choose library…" button; People and Places.
+4. ✅ **Favourites, Media Types, People, Places, Mac app.**
+   - Sidebar: Favourites; Media Types (Videos, Selfies, Live Photos, Portrait, Panoramas,
+     Slo-mo, Time-lapse, Screenshots).
+   - People: named people with face avatars (cropped in the browser), sorted by
+     favourites, then photo count.
+   - Places: Leaflet + OpenStreetMap with clustered thumbnail pins.
+   - Menu bar app (`rumps`), built with `scripts/build-app.sh`. It shares its start/stop code
+     with the command line (`share.py`) and keeps the password in the Keychain.
+   - Index format v3; existing caches re-index on first open.
 
 ## Findings
 
