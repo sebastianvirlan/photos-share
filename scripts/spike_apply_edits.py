@@ -14,6 +14,7 @@ Make the TEST library the System Photo Library first (Photos → Settings → Ge
 import argparse
 import base64
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -29,11 +30,24 @@ from spike_import_edits import is_real_edit
 APPS = [Path("/Applications/Photos Share.app"), Path.home() / "Applications/Photos Share.app"]
 
 
+REPO = Path(__file__).resolve().parent.parent
+
+
+def _built(a: Path) -> float:
+    return (a / "Contents/MacOS/PhotosShare").stat().st_mtime
+
+
 def newest_app() -> Path:
+    """The newest built app, rebuilt first if the Swift code changed since (e.g. after a pull)."""
     found = [a for a in APPS if a.exists()]
-    if not found:
-        sys.exit("Photos Share.app isn’t built yet: run scripts/build-app.sh")
-    return max(found, key=lambda a: (a / "Contents/MacOS/PhotosShare").stat().st_mtime)
+    newest_source = max(f.stat().st_mtime for f in (REPO / "mac").rglob("*.swift")
+                        if ".build" not in f.parts)
+    if not found or max(map(_built, found)) < newest_source:
+        print("The Mac app is older than its code: rebuilding it (takes a minute)…")
+        subprocess.run([str(REPO / "scripts/build-app.sh")], check=True,
+                       env={**os.environ, "NO_REVEAL": "1"})
+        found = [a for a in APPS if a.exists()]
+    return max(found, key=_built)
 
 
 def main() -> None:
@@ -88,7 +102,7 @@ def main() -> None:
     manifest.write_text(json.dumps(entries))
     log = manifest.with_suffix(".json.log")
     app = args.app or newest_app()
-    built = datetime.fromtimestamp((app / "Contents/MacOS/PhotosShare").stat().st_mtime)
+    built = datetime.fromtimestamp(_built(app))
     print(f"Using {app} (built {built:%Y-%m-%d %H:%M})")
     print("Running Photos Share. It comes to the front: allow Photos access, and allow the edits "
           "if macOS asks (check behind other windows too).\n")
