@@ -137,7 +137,7 @@ class Share:
     def start_background(self) -> None:
         """Run the server on a thread (for the menu bar app)."""
         self._server = self.server()
-        self._thread = threading.Thread(target=self._server.run, daemon=True, name="server")
+        self._thread = threading.Thread(target=self._run_server, daemon=True, name="server")
         self._thread.start()
         for _ in range(100):  # wait up to ~5 s for the port to open
             if self._server.started or not self._thread.is_alive():
@@ -152,6 +152,12 @@ class Share:
             self.stop()
             raise
         self.start_keep_awake()
+
+    def _run_server(self) -> None:
+        try:
+            self._server.run()
+        except SystemExit:  # uvicorn exits like this when the port is taken; reported by caller
+            pass
 
     def stop(self) -> None:
         self.stop_keep_awake()

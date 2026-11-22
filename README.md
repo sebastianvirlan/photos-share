@@ -56,3 +56,18 @@ Generated thumbnails, previews and library indexes are cached in
 
 Don't open a library in Photos.app while sharing it. Photos may upgrade it, and the tool
 will then rebuild its index.
+
+## Tests
+
+```sh
+uv run pytest
+```
+
+The suite uses fake libraries with pre-built indexes, so no real Photos library or drive is
+needed. Everything runs on macOS, since it uses `sips`, `caffeinate` and JavaScriptCore.
+- **Server:** API routes, path-traversal protection, downloads, video range requests, and
+  unplugged-drive handling.
+- **Password:** login, lockout, and cookies.
+- **Sharing:** start/stop, port conflicts, keep-awake, and the Tailscale/Funnel safety checks.
+- **Frontend:** `app.js` runs under JavaScriptCore with a tiny DOM stand-in
+  (`tests/frontend/`), covering routing, views, filters and the viewer.
