@@ -368,3 +368,12 @@ def test_run_import_cancel_reports_what_was_imported(monkeypatch):
                               [p.uuid for p in src_photos])
     assert out["cancelled"] is True
     assert out["imported_uuids"] == [str(i) for i in range(50)]
+
+
+def test_edited_video_found_under_other_names(lib):
+    p = files_photo(lib, "A5", edited=True, movie=True)
+    for f in (lib / "resources" / "renders" / "A").iterdir():
+        f.unlink()
+    (lib / "resources" / "renders" / "A" / "A5_2_100_a.MOV").write_bytes(b"v")
+    (lib / "resources" / "renders" / "A" / "A5_2_100_a.plist").write_bytes(b"p")  # not a video
+    assert importer.edited_image(p).endswith("A5_2_100_a.MOV")

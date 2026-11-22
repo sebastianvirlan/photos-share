@@ -264,13 +264,20 @@ def _wait_for_library(dst: Path, wait: float = 180) -> None:
 
 # ---- keeping edits: parts for the Mac app, then checks and details ---------------------
 
+VIDEO_EXTS = {".mov", ".mp4", ".m4v"}
+
+
 def edited_image(p) -> str | None:
     """The edited image/video Photos saved. osxphotos guesses its name from the original's
     type, which misses e.g. a HEIC whose edit was saved as JPEG, so look for it too."""
     if p.path_edited and os.path.exists(p.path_edited):
         return str(p.path_edited)
-    pattern = f"{p.uuid}_2_0_a.*" if p.ismovie else f"{p.uuid}_1_201_a.*"
-    found = sorted(glob.glob(str(Path(p._db.library_path) / "resources" / "renders" / p.uuid[0] / pattern)))
+    folder = Path(p._db.library_path) / "resources" / "renders" / p.uuid[0]
+    if p.ismovie:  # usually UUID_2_0_a.mov, but the middle part varies
+        found = sorted(f for f in glob.glob(str(folder / f"{p.uuid}_*_a.*"))
+                       if Path(f).suffix.lower() in VIDEO_EXTS)
+    else:
+        found = sorted(glob.glob(str(folder / f"{p.uuid}_1_201_a.*")))
     return found[0] if found else None
 
 
