@@ -119,3 +119,177 @@ def test_cli_rejects_same_or_bad_libraries(tmp_path, capsys):
     (lib / "Photos.sqlite").write_bytes(b"x")
     with pytest.raises(SystemExit, match="same library"):
         dedupe.main([str(tmp_path / "L.photoslibrary"), str(tmp_path / "L.photoslibrary")])
+
+
+# ---- automatic clean-up: every refusal path, with PhotoKit / Finder faked ------------
+
+from photos_share.dedupe import CleanupError, Result  # noqa: E402
+
+
+def verified(*uuids):
+    return Result(matched=[item(u, date="2024-01-01T10:00:00+00:00") for u in uuids])
+
+
+class FakeAsset:
+    def __init__(self, uuid, epoch):
+        self.uuid, self.epoch = uuid, epoch
+
+    def localIdentifier(self):
+        return f"{self.uuid}/L0/001"
+
+    def creationDate(self):
+        return types.SimpleNamespace(timeIntervalSince1970=lambda: self.epoch)
+
+
+class FakeFetch:
+    def __init__(self, assets):
+        self.assets = assets
+
+    def count(self):
+        return len(self.assets)
+
+    def objectAtIndex_(self, i):
+        return self.assets[i]
+
+
+def fake_photos(monkeypatch, *, auth=3, assets=(), succeed=True):
+    """Install a fake `Photos` (PhotoKit) module; returns a log of what was asked of it."""
+    log = {"deleted": None, "requested": None}
+
+    class Lib:
+        @staticmethod
+        def requestAuthorizationForAccessLevel_handler_(level, handler):
+            handler(auth)
+
+        @staticmethod
+        def sharedPhotoLibrary():
+            return Lib
+
+        @staticmethod
+        def performChanges_completionHandler_(changes, done):
+            changes()
+            done(succeed, None)
+
+    class Asset:
+        @staticmethod
+        def fetchAssetsWithLocalIdentifiers_options_(ids, _):
+            log["requested"] = ids
+            return FakeFetch([a for a in assets if f"{a.uuid}/L0/001" in ids])
+
+    class ChangeRequest:
+        @staticmethod
+        def deleteAssets_(fetch):
+            log["deleted"] = [a.uuid for a in fetch.assets]
+
+    monkeypatch.setitem(sys.modules, "Photos", types.SimpleNamespace(
+        PHPhotoLibrary=Lib, PHAsset=Asset, PHAssetChangeRequest=ChangeRequest,
+        PHAccessLevelReadWrite=2, PHAuthorizationStatusAuthorized=3))
+    return log
+
+
+SRC = None
+JAN1 = 1704103200.0  # 2024-01-01T10:00:00Z
+
+
+@pytest.fixture
+def src(tmp_path, monkeypatch):
+    path = (tmp_path / "Source.photoslibrary").resolve()
+    path.mkdir()
+    monkeypatch.setattr(dedupe, "system_library", lambda: path)  # source IS the system library
+    return path
+
+
+def test_delete_refused_unless_source_is_system_library(src, monkeypatch):
+    log = fake_photos(monkeypatch, assets=[FakeAsset("A", JAN1)])
+    monkeypatch.setattr(dedupe, "system_library", lambda: src.parent / "Other.photoslibrary")
+    with pytest.raises(CleanupError, match="isn’t the System Photo Library"):
+        dedupe.delete_with_photokit(src, verified("A").matched)
+    assert log["requested"] is None and log["deleted"] is None
+
+
+def test_delete_refused_without_permission(src, monkeypatch):
+    log = fake_photos(monkeypatch, auth=2, assets=[FakeAsset("A", JAN1)])
+    with pytest.raises(CleanupError, match="access wasn’t granted"):
+        dedupe.delete_with_photokit(src, verified("A").matched)
+    assert log["deleted"] is None
+
+
+def test_delete_refused_when_any_photo_is_missing(src, monkeypatch):
+    log = fake_photos(monkeypatch, assets=[FakeAsset("A", JAN1)])
+    with pytest.raises(CleanupError, match="Only 1 of 2"):
+        dedupe.delete_with_photokit(src, verified("A", "B").matched)
+    assert log["deleted"] is None
+
+
+def test_delete_refused_when_a_photo_does_not_match(src, monkeypatch):
+    log = fake_photos(monkeypatch, assets=[FakeAsset("A", JAN1), FakeAsset("B", JAN1 + 3600)])
+    with pytest.raises(CleanupError, match="doesn’t match"):
+        dedupe.delete_with_photokit(src, verified("A", "B").matched)
+    assert log["deleted"] is None
+
+
+def test_delete_exactly_the_verified_photos(src, monkeypatch):
+    log = fake_photos(monkeypatch, assets=[FakeAsset("A", JAN1), FakeAsset("B", JAN1),
+                                           FakeAsset("C", JAN1)])
+    assert dedupe.delete_with_photokit(src, verified("A", "B").matched) == 2
+    assert log["requested"] == ["A/L0/001", "B/L0/001"] and log["deleted"] == ["A", "B"]
+
+
+def test_delete_cancelled_in_macos_dialog(src, monkeypatch):
+    fake_photos(monkeypatch, assets=[FakeAsset("A", JAN1)], succeed=False)
+    with pytest.raises(CleanupError, match="cancelled"):
+        dedupe.delete_with_photokit(src, verified("A").matched)
+
+
+class FakeFileManager:
+    trashed = []
+
+    @classmethod
+    def defaultManager(cls):
+        return cls
+
+    @classmethod
+    def trashItemAtURL_resultingItemURL_error_(cls, url, _, __):
+        cls.trashed.append(url)
+        return True, types.SimpleNamespace(path=lambda: "/Users/x/.Trash/Source.photoslibrary"), None
+
+
+@pytest.fixture
+def finder(monkeypatch):
+    import Foundation
+    FakeFileManager.trashed = []
+    monkeypatch.setattr(Foundation, "NSFileManager", FakeFileManager)
+    monkeypatch.setattr(dedupe, "photos_running", lambda: False)
+    return FakeFileManager
+
+
+def test_trash_refused_unless_everything_verified(src, finder, monkeypatch):
+    monkeypatch.setattr(dedupe, "system_library", lambda: None)
+    partial = Result(matched=[item("A")], missing=[item("B")])
+    with pytest.raises(CleanupError, match="Not every photo"):
+        dedupe.trash_library(src, partial)
+    edits = Result(matched=[item("A")], edit_lost=[item("B")])
+    with pytest.raises(CleanupError, match="Not every photo"):
+        dedupe.trash_library(src, edits)
+    assert finder.trashed == []
+
+
+def test_trash_refused_for_system_library_or_while_photos_runs(src, finder, monkeypatch):
+    with pytest.raises(CleanupError, match="System Photo Library"):
+        dedupe.trash_library(src, verified("A"))
+    monkeypatch.setattr(dedupe, "system_library", lambda: None)
+    monkeypatch.setattr(dedupe, "photos_running", lambda: True)
+    with pytest.raises(CleanupError, match="Quit Photos"):
+        dedupe.trash_library(src, verified("A"))
+    assert finder.trashed == []
+
+
+def test_trash_moves_library(src, finder, monkeypatch):
+    monkeypatch.setattr(dedupe, "system_library", lambda: None)
+    where = dedupe.trash_library(src, verified("A"))
+    assert len(finder.trashed) == 1 and where.name == "Source.photoslibrary"
+
+
+def test_real_system_library_lookup_is_a_path():
+    p = dedupe.system_library()
+    assert p is None or p.suffix == ".photoslibrary"

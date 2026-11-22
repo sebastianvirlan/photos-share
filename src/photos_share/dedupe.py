@@ -1,9 +1,12 @@
 """photos-dedupe: after File → Import from another library, find what's safe to delete.
 
-Read-only by default: reports which photos of SOURCE are already in DEST. With --mark, it
-opens SOURCE in Photos and collects exactly the verified photos in an album, so you can
-review them and delete with ⌘A, ⌘⌫. It never deletes anything itself (Photos doesn't allow
-scripted deletion of photos, and that's a decision worth making by eye anyway).
+Read-only by default: reports which photos of SOURCE are already in DEST. Then, after you
+confirm:
+  --trash-library  everything verified → the whole SOURCE library goes to the Trash;
+  --delete         verified photos are deleted via PhotoKit (SOURCE must be the System
+                   Photo Library; macOS confirms; Recently Deleted keeps them 30 days);
+  --mark           verified photos are collected in an album in SOURCE for you to delete.
+It never edits a library's database itself.
 """
 
 from __future__ import annotations
@@ -51,6 +54,7 @@ class Result:
     matched_by_fallback: int = 0                                 # of `matched`, not by fingerprint
     edit_lost: list[Item] = field(default_factory=list)          # in DEST, but without the edit
     missing: list[Item] = field(default_factory=list)            # not in DEST at all
+    pairs: dict[str, tuple[str, str]] = field(default_factory=dict)  # src uuid → (dest uuid, how)
 
     @property
     def total(self) -> int:
@@ -75,7 +79,10 @@ def match(source: list[Item], dest: list[Item]) -> Result:
             hits, fallback = by_key.get(s.fallback_key, []), True
         if not hits:
             r.missing.append(s)
-        elif s.edited and not any(d.edited for d in hits):
+            continue
+        best = next((d for d in hits if d.edited), hits[0]) if s.edited else hits[0]
+        r.pairs[s.uuid] = (best.uuid, "filename, size and date" if fallback else "fingerprint")
+        if s.edited and not best.edited:
             r.edit_lost.append(s)
         else:
             r.matched.append(s)
@@ -106,10 +113,10 @@ def report(r: Result, src: Path, dst: Path) -> str:
     lines.append("")
     if r.total and not r.missing and not r.edit_lost:
         lines.append(f"Everything in “{src.stem}” is in “{dst.stem}”. After a final look, the "
-                     "whole source library can go to the Trash.")
+                     "whole source library can go to the Trash (--trash-library).")
     elif r.matched:
-        lines.append(f"Run again with --mark to collect the {len(r.matched):,} verified photos "
-                     "in an album in the source library, ready to delete.")
+        lines.append(f"Run again with --delete (if the source is the System Photo Library) or "
+                     f"--mark to clean up the {len(r.matched):,} verified photos.")
     return "\n".join(lines)
 
 
@@ -136,17 +143,161 @@ def mark(src: Path, items: list[Item], album_name: str) -> int:
     return added
 
 
+# ---- automatic clean-up ------------------------------------------------------------
+#
+# Two safe ways to remove what was imported, without touching the database ourselves:
+#  * everything imported → move the whole source library to the Trash (restorable);
+#  * some imported       → delete those photos with PhotoKit, Apple's API, which only works
+#                           on the System Photo Library, asks the user to confirm, and puts
+#                           the photos in Recently Deleted for 30 days.
+
+class CleanupError(Exception):
+    """Refused for safety; the message says why and what to do."""
+
+
+def all_verified(r: Result) -> bool:
+    return r.total > 0 and not r.missing and not r.edit_lost
+
+
+def system_library() -> Path | None:
+    from osxphotos.utils import get_system_library_path
+    p = get_system_library_path()
+    return Path(p).resolve() if p else None
+
+
+def photos_running() -> bool:
+    from AppKit import NSRunningApplication
+    return bool(NSRunningApplication.runningApplicationsWithBundleIdentifier_("com.apple.Photos"))
+
+
+def trash_library(src: Path, r: Result) -> Path:
+    """Move the whole SOURCE library to the Trash. Only when every photo was verified."""
+    from Foundation import NSURL, NSFileManager
+
+    if not all_verified(r):
+        raise CleanupError("Not every photo is in the destination, so the library is kept.")
+    if system_library() == src.resolve():
+        raise CleanupError(f"“{src.stem}” is the System Photo Library. Choose another one in "
+                           "Photos → Settings → General first.")
+    if photos_running():
+        raise CleanupError("Quit Photos first, so it isn’t using the library.")
+    ok, trashed, err = NSFileManager.defaultManager().trashItemAtURL_resultingItemURL_error_(
+        NSURL.fileURLWithPath_(str(src)), None, None)
+    if not ok:
+        raise CleanupError(f"Couldn’t move it to the Trash: {err}")
+    return Path(trashed.path()) if trashed else src
+
+
+def can_delete_with_photokit(src: Path) -> bool:
+    return system_library() == src.resolve()
+
+
+def _epoch(iso: str) -> float:
+    from datetime import datetime
+    return datetime.fromisoformat(iso).timestamp()
+
+
+def delete_with_photokit(src: Path, items: list[Item], wait=None) -> int:
+    """Delete `items` from SOURCE through PhotoKit. Returns how many were deleted.
+
+    `wait(event, timeout)` waits for PhotoKit callbacks; the CLI passes one that keeps the
+    main run loop turning (the confirmation dialog needs it), the app runs this on a thread.
+    """
+    import threading
+
+    import Photos
+
+    if not items:
+        return 0
+    if not can_delete_with_photokit(src):
+        raise CleanupError(f"“{src.stem}” isn’t the System Photo Library, so Photos won’t "
+                           "let other apps delete from it. Set it in Photos → Settings → "
+                           "General → Use as System Photo Library, or use “Mark in Photos”.")
+    wait = wait or (lambda ev, t: ev.wait(t))
+
+    # 1. Permission (macOS asks the first time).
+    done, status = threading.Event(), {}
+
+    def on_auth(s):
+        status["s"] = s
+        done.set()
+
+    Photos.PHPhotoLibrary.requestAuthorizationForAccessLevel_handler_(
+        Photos.PHAccessLevelReadWrite, on_auth)
+    wait(done, 120)
+    if status.get("s") != Photos.PHAuthorizationStatusAuthorized:
+        raise CleanupError("Photos access wasn’t granted (System Settings → Privacy & "
+                           "Security → Photos).")
+
+    # 2. Find exactly these photos, and check each one is the photo we verified.
+    ids = [f"{it.uuid}/L0/001" for it in items]
+    found = Photos.PHAsset.fetchAssetsWithLocalIdentifiers_options_(ids, None)
+    if found.count() != len(items):
+        raise CleanupError(f"Only {found.count()} of {len(items)} photos were found in the "
+                           "System Photo Library; nothing was deleted.")
+    expected = {it.uuid: _epoch(it.date) for it in items if it.date}
+    for i in range(found.count()):
+        asset = found.objectAtIndex_(i)
+        uuid = str(asset.localIdentifier()).split("/")[0]
+        when = asset.creationDate()
+        if uuid in expected and when is not None and \
+                abs(when.timeIntervalSince1970() - expected[uuid]) > 1.5:
+            raise CleanupError(f"Photo {uuid} doesn’t match the one verified (different "
+                               "date); nothing was deleted.")
+
+    # 3. Delete (macOS shows its own confirmation; photos go to Recently Deleted).
+    done, result = threading.Event(), {}
+
+    def changes():
+        Photos.PHAssetChangeRequest.deleteAssets_(found)
+
+    def on_done(success, error):
+        result.update(ok=bool(success), error=error)
+        done.set()
+
+    Photos.PHPhotoLibrary.sharedPhotoLibrary().performChanges_completionHandler_(changes, on_done)
+    wait(done, 600)
+    if not done.is_set():
+        raise CleanupError("Timed out waiting for Photos.")
+    if not result.get("ok"):
+        err = result.get("error")
+        raise CleanupError("Nothing was deleted" + (f": {err.localizedDescription()}" if err
+                                                    else " (cancelled)."))
+    return len(items)
+
+
+def _wait_with_runloop(event, timeout: float) -> None:
+    """Wait while letting the main run loop process events (e.g. the confirm dialog)."""
+    import time
+
+    from Foundation import NSDate, NSRunLoop
+    end = time.monotonic() + timeout
+    while not event.is_set() and time.monotonic() < end:
+        NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.1))
+
+
+def _confirm(question: str) -> bool:
+    return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
         prog="photos-dedupe",
         description="After importing one Photos library into another, find which photos are "
-                    "safe to delete from the source. Read-only unless --mark is given.")
+                    "safe to delete from the source. Read-only unless an action flag is given.")
     ap.add_argument("source", type=Path, help="library you imported FROM")
     ap.add_argument("dest", type=Path, help="library you imported INTO")
-    ap.add_argument("--mark", action="store_true",
-                    help="open SOURCE in Photos and put the verified photos in an album")
+    act = ap.add_mutually_exclusive_group()
+    act.add_argument("--mark", action="store_true",
+                     help="open SOURCE in Photos and put the verified photos in an album")
+    act.add_argument("--delete", action="store_true",
+                     help="delete the verified photos from SOURCE via PhotoKit (SOURCE must be "
+                          "the System Photo Library; macOS asks to confirm)")
+    act.add_argument("--trash-library", action="store_true",
+                     help="move the whole SOURCE library to the Trash (only if every photo "
+                          "is verified in DEST)")
     ap.add_argument("--album", default=None, help="album name (default: 'In <dest> – safe to delete')")
-    ap.add_argument("--yes", action="store_true", help="don't ask before switching Photos' library")
+    ap.add_argument("--yes", action="store_true", help="don't ask for confirmation in the terminal")
     args = ap.parse_args(argv)
     logging.getLogger("osxphotos").setLevel(logging.ERROR)
 
@@ -161,20 +312,30 @@ def main(argv: list[str] | None = None) -> None:
     r = match(load(src), load(dst))
     print(report(r, src, dst))
 
-    if not args.mark:
-        return
-    if not r.matched:
-        sys.exit("Nothing verified, so nothing to mark.")
-    if not args.yes:
-        answer = input(f"\nPhotos will quit and reopen with “{src.stem}”, then an album with "
-                       f"{len(r.matched):,} photos is created there. Continue? [y/N] ")
-        if answer.strip().lower() not in ("y", "yes"):
-            sys.exit("Cancelled.")
-    name = args.album or f"In {dst.stem} – safe to delete"
+    ask = (lambda q: True) if args.yes else _confirm
     try:
-        added = mark(src, r.matched, name)
-    except RuntimeError as e:
+        if args.trash_library:
+            if not ask(f"\nMove the whole library “{src.stem}” to the Trash?"):
+                sys.exit("Cancelled.")
+            print(f"Moved to the Trash: {trash_library(src, r)}")
+        elif args.delete:
+            if not r.matched:
+                sys.exit("Nothing verified, so nothing to delete.")
+            if not ask(f"\nDelete {len(r.matched):,} verified photos from “{src.stem}”? "
+                       "(macOS will ask too; they go to Recently Deleted for 30 days)"):
+                sys.exit("Cancelled.")
+            n = delete_with_photokit(src, r.matched, wait=_wait_with_runloop)
+            print(f"Deleted {n:,} photos from “{src.stem}”. They’re in Recently Deleted for "
+                  "30 days.")
+        elif args.mark:
+            if not r.matched:
+                sys.exit("Nothing verified, so nothing to mark.")
+            if not ask(f"\nPhotos will quit and reopen with “{src.stem}”, then an album with "
+                       f"{len(r.matched):,} photos is created there. Continue?"):
+                sys.exit("Cancelled.")
+            added = mark(src, r.matched, args.album or f"In {dst.stem} – safe to delete")
+            print(f"\nAdded {added:,} photos to the album shown in Photos.\n"
+                  "Review it, then: ⌘A (select all) → ⌘⌫ (delete from library) → confirm.\n"
+                  "They stay in Recently Deleted for 30 days if you change your mind.")
+    except (CleanupError, RuntimeError) as e:
         sys.exit(f"Error: {e}")
-    print(f"\nAdded {added:,} photos to the album shown in Photos.\n"
-          "Review it, then: ⌘A (select all) → ⌘⌫ (delete from library) → confirm.\n"
-          "They stay in Recently Deleted for 30 days if you change your mind.")

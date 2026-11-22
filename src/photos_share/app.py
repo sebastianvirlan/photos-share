@@ -234,18 +234,63 @@ class PhotosShareApp(rumps.App):
             rumps.alert("Couldn’t compare the libraries", job["error"])
             return
         r, src, dst = job["result"], job["src"], job["dst"]
-        text = dedupe.report(r, src, dst).replace("Run again with --mark to collect",
-                                                  "“Mark in Photos” collects")
+        text = dedupe.report(r, src, dst).split("\nRun again with")[0].split(
+            " (--trash-library)")[0].rstrip()
         NSApp.activateIgnoringOtherApps_(True)
         if not r.matched:
             rumps.alert("Clean Up After Import", text)
             return
-        if rumps.alert("Clean Up After Import", text + "\n\nPhotos will quit and reopen with "
-                       f"“{src.stem}”.", ok="Mark in Photos", cancel="Close") != 1:
+        album = f"In {dst.stem} – safe to delete"
+
+        if dedupe.all_verified(r):
+            choice = rumps.alert("Clean Up After Import", text + "\n\nEverything was imported. "
+                                 "Move the whole source library to the Trash? (You can put it "
+                                 "back from the Trash.)", ok="Move Library to Trash",
+                                 cancel="Close", other="Mark in Photos")
+            if choice == 1:
+                if self._shares(src):
+                    rumps.alert("Stop sharing first", "That library is being shared right now.")
+                    return
+                try:
+                    where = dedupe.trash_library(src, r)
+                except dedupe.CleanupError as e:
+                    rumps.alert("Library kept", str(e))
+                    return
+                rumps.alert("Moved to the Trash", f"“{src.stem}” is in the Trash:\n{where}")
+                return
+            if choice != -1:
+                return
+            return self._mark(src, r, album)
+
+        if dedupe.can_delete_with_photokit(src):
+            choice = rumps.alert("Clean Up After Import", text + f"\n\nDelete the "
+                                 f"{len(r.matched):,} verified photos from “{src.stem}”? macOS "
+                                 "will ask you to confirm; they stay in Recently Deleted for "
+                                 "30 days.", ok=f"Delete {len(r.matched):,} Photos",
+                                 cancel="Close", other="Mark in Photos")
+            if choice == 1:
+                return self._delete(src, r)
+            if choice == -1:
+                return self._mark(src, r, album)
             return
+
+        if rumps.alert("Clean Up After Import", text + "\n\n“Mark in Photos” collects the "
+                       "verified photos in an album for you to delete. (To let this app delete "
+                       "them directly, make the source the System Photo Library in Photos → "
+                       "Settings → General.)", ok="Mark in Photos", cancel="Close") == 1:
+            self._mark(src, r, album)
+
+    def _shares(self, lib: Path) -> bool:
+        if not self.share:
+            return False
+        shared = Path(self.settings["path"]).resolve()
+        return lib.resolve() in (shared, *shared.glob("*.photoslibrary"))
+
+    def _mark(self, src, r, album):
+        from . import dedupe
         self.status.title = f"Marking photos in “{src.stem}”…"
         try:
-            added = dedupe.mark(src, r.matched, f"In {dst.stem} – safe to delete")
+            added = dedupe.mark(src, r.matched, album)
         except Exception as e:  # noqa: BLE001
             rumps.alert("Couldn’t mark the photos", str(e))
             return
@@ -255,6 +300,33 @@ class PhotosShareApp(rumps.App):
                     f"{added:,} photos are in the album now shown in Photos.\n\nReview it, then "
                     "press ⌘A (select all), ⌘⌫ (delete) and confirm. They stay in Recently "
                     "Deleted for 30 days.")
+
+    def _delete(self, src, r):
+        """PhotoKit delete on a thread; the main run loop must stay free for macOS's dialog."""
+        from . import dedupe
+        job = {"n": None, "error": None}
+
+        def work():
+            try:
+                job["n"] = dedupe.delete_with_photokit(src, r.matched)
+            except Exception as e:  # noqa: BLE001
+                job["error"] = str(e)
+
+        def check(timer):
+            if job["n"] is None and job["error"] is None:
+                return
+            timer.stop()
+            self.refresh()
+            if job["error"]:
+                rumps.alert("Nothing was deleted", job["error"])
+            else:
+                rumps.alert("Done", f"Deleted {job['n']:,} photos from “{src.stem}”. They’re in "
+                            "Recently Deleted for 30 days.")
+
+        self.status.title = f"Deleting from “{src.stem}”…"
+        threading.Thread(target=work, daemon=True, name="photokit-delete").start()
+        self._delete_timer = rumps.Timer(check, 0.5)
+        self._delete_timer.start()
 
     def quit(self, _):
         self.stop_sharing()

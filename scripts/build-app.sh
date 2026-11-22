@@ -29,6 +29,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Photos Share deletes photos you've confirmed were imported into another library.</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
 </dict></plist>
 PLIST
