@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,7 @@ from pathlib import Path
 TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 TAILSCALE_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 MIN_FUNNEL_PASSWORD = 8
+FUNNEL_WAIT = 8.0   # seconds to watch Tailscale's output when starting Funnel
 MODES = ("local", "tailscale", "funnel")
 
 
@@ -123,19 +125,37 @@ class Share:
             self._caffeinate.wait(timeout=5)
         self._caffeinate = None
 
-    def start_funnel(self) -> None:
+    def start_funnel(self, wait: float = FUNNEL_WAIT) -> None:
         if self.cfg.mode != "funnel":
             return
-        # Foreground mode: the public link exists only while this process runs.
-        self._funnel = subprocess.Popen([tailscale_cli(), "funnel", str(self.cfg.port)],
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                        text=True)
-        try:
-            err = self._funnel.communicate(timeout=3)[1]
-        except subprocess.TimeoutExpired:
-            return  # still running: good
-        self._funnel = None
-        raise ShareError("Tailscale Funnel didn't start:\n" + (err or "").strip() +
+        # Foreground mode: the public link exists only while this process runs. Tailscale's
+        # output is read, not discarded: when Funnel isn't enabled for this Mac yet, it prints
+        # a link to approve it and then waits, which would otherwise look like success.
+        proc = subprocess.Popen([tailscale_cli(), "funnel", str(self.cfg.port)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        lines: list[str] = []
+        threading.Thread(target=lambda: [lines.append(l.rstrip()) for l in proc.stdout],
+                         daemon=True).start()   # keeps draining, so Tailscale never blocks
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline and proc.poll() is None:
+            text = "\n".join(lines)
+            if "login.tailscale.com" in text or "not enabled" in text.lower():
+                break
+            if "available on the internet" in text.lower():
+                self._funnel = proc
+                return
+            time.sleep(0.1)
+        text = "\n".join(lines).strip()
+        if proc.poll() is None and "login.tailscale.com" not in text and "not enabled" not in text.lower():
+            self._funnel = proc   # running and not asking for anything: assume it's serving
+            return
+        if proc.poll() is None:
+            proc.terminate()
+        link = re.search(r"https://login\.tailscale\.com\S*", text)
+        if link:
+            raise ShareError("Tailscale Funnel isn’t enabled for this Mac yet. Open this link once, "
+                             f"approve it, then start sharing again:\n{link.group(0)}")
+        raise ShareError("Tailscale Funnel didn’t start:\n" + text +
                          "\nIf it mentions enabling Funnel, open that link once, then retry.")
 
     def stop_funnel(self) -> None:

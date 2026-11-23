@@ -105,6 +105,9 @@ def main() -> None:
     share.start_keep_awake()
     share.start_watching()
     say(f"\nSharing at: {share.url}\nPress Ctrl+C to stop sharing.")
+    if mode == "funnel":
+        say("The first time, a public link can take a few minutes to work (Tailscale sets up its\n"
+            "address and certificate). Test it from a phone on mobile data, not from this Mac.")
     server = share.server()
     if args.machine:
         # Announce "ready" only once the port is actually open.

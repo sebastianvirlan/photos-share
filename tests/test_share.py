@@ -81,3 +81,39 @@ def test_start_stop_restart_and_keep_awake(libs_dir):
         assert not my_caffeinate()
     finally:
         s2.stop()
+
+
+# ---- starting Funnel: Tailscale's output is read (with a stand-in `tailscale` command) ----
+
+def _fake_tailscale(tmp_path, script: str) -> str:
+    cli = tmp_path / "tailscale"
+    cli.write_text("#!/bin/sh\n" + script + "\n")
+    cli.chmod(0o755)
+    return str(cli)
+
+
+def _funnel_share():
+    import types
+    return types.SimpleNamespace(cfg=types.SimpleNamespace(mode="funnel", port=8080), _funnel=None)
+
+
+@pytest.mark.parametrize("script,ok,expect", [
+    ('echo "Available on the internet:"; echo "https://mac.tailnet.ts.net/"; sleep 30', True, None),
+    ('echo "Funnel is not enabled on your tailnet."; echo "To enable, visit:";'
+     ' echo "  https://login.tailscale.com/f/funnel?node=abc"; sleep 30', False,
+     "https://login.tailscale.com/f/funnel?node=abc"),
+    ('echo "error: serve config denied" >&2; exit 1', False, "serve config denied"),
+])
+def test_start_funnel_reads_tailscale(monkeypatch, tmp_path, script, ok, expect):
+    from photos_share import share
+    monkeypatch.setattr(share, "tailscale_cli", lambda: _fake_tailscale(tmp_path, script))
+    s = _funnel_share()
+    if ok:
+        share.Share.start_funnel(s, wait=3)
+        assert s._funnel is not None and s._funnel.poll() is None
+        s._funnel.terminate()
+    else:
+        with pytest.raises(share.ShareError) as e:
+            share.Share.start_funnel(s, wait=3)
+        assert expect in str(e.value)
+        assert s._funnel is None
