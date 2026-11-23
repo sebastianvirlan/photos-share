@@ -70,6 +70,7 @@ class Library:
     _loaded_fp: list | None = None    # fingerprint of the index currently in memory
     _pending_fp: list | None = None   # a newer fingerprint seen once, waiting to settle
     _refreshing: bool = False
+    _derivs: dict[str, list[Path]] | None = None   # uuid → Photos' preview files (listed once)
 
     def __post_init__(self):
         self.id = hashlib.sha1(str(self.path).encode()).hexdigest()[:10]
@@ -235,6 +236,7 @@ class Library:
         self._drop_stale_renditions(by_uuid)
         self.assets, self.by_uuid, self.albums, self.people = visible, by_uuid, albums, people
         self._loaded_fp = data.get("fingerprint")
+        self._derivs = None  # previews may have changed with the library
         self.rev += 1
         self.state = "ready"
 
@@ -257,16 +259,29 @@ class Library:
 
     def derivatives(self, uuid: str) -> list[Path]:
         """Preview JPEGs Photos already generated, largest first."""
-        found = []
-        for sub in (Path("resources/derivatives") / uuid[0],
-                    Path("resources/derivatives/masters") / uuid[0]):
-            d = self.path / sub
-            try:
-                found += [d / n for n in os.listdir(d) if n.startswith(uuid + "_")
-                          and n.lower().endswith((".jpg", ".jpeg"))]
-            except FileNotFoundError:
-                continue
+        found = [p for p in self._derivative_index().get(uuid, []) if p.exists()]
         return sorted(found, key=lambda p: p.stat().st_size, reverse=True)
+
+    def _derivative_index(self) -> dict[str, list[Path]]:
+        """Each previews folder is listed once (they hold thousands of files, so listing one
+        per photo request was slow on a hard drive), then looked up by uuid."""
+        index = self._derivs
+        if index is None:
+            index = {}
+            base = self.path / "resources" / "derivatives"
+            folders = []
+            for root in (base, base / "masters"):
+                try:
+                    folders += [root / n for n in os.listdir(root)
+                                if n != "masters" and (root / n).is_dir()]
+                except FileNotFoundError:
+                    continue
+            for d in folders:
+                for n in os.listdir(d):
+                    if n.lower().endswith((".jpg", ".jpeg")) and "_" in n:
+                        index.setdefault(n.split("_", 1)[0], []).append(d / n)
+            self._derivs = index
+        return index
 
 
 def _avatar(person) -> dict | None:

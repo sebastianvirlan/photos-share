@@ -86,8 +86,12 @@ def main() -> None:
 
     libs = list(share.collection.libraries.values())
     ready = sum(lib.state == "ready" for lib in libs)
-    say(f"{len(libs)} librar{'y' if len(libs) == 1 else 'ies'} "
-          f"({ready} already indexed; others index on first open)")
+    if len(libs) == 1 and ready == 0:
+        libs[0].ensure_open()   # one library: read it now, not when the first visitor arrives
+        say("1 library (reading it now, in the background)")
+    else:
+        say(f"{len(libs)} librar{'y' if len(libs) == 1 else 'ies'} "
+            f"({ready} already indexed; others index on first open)")
     say(f"Screenshots: {'shown' if args.screenshots else 'hidden'} · "
         f"Hidden album: {'included' if args.hidden else 'excluded'} · "
           f"Video: {args.video} · Downloads: {'on' if args.downloads else 'off'} · "

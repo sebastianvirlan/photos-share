@@ -102,6 +102,7 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
             code = 500 if lib.state == "error" else 202
             return JSONResponse({"state": lib.state, "error": lib.error, "name": lib.name},
                                 status_code=code)
+        media.prepare_thumbnails(lib)   # once per version: later visits load instantly
         return {
             "id": lib.id, "name": lib.name, "state": "ready", "rev": lib.rev,
             "available": lib.available, "downloads": downloads,
@@ -113,10 +114,12 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
     @app.get("/thumb/{lib_id}/{uuid}")
     def thumb(lib_id: str, uuid: str):
         lib, asset = lookup(lib_id, uuid)
-        path = media.thumbnail(lib, asset)
+        path, final = media.thumbnail_now(lib, asset)
         if path is None:
             raise HTTPException(404)
-        return FileResponse(path, media_type="image/jpeg", headers=IMG_CACHE)
+        # A stand-in preview mustn't be kept by the browser: the proper one comes next time.
+        return FileResponse(path, media_type="image/jpeg",
+                            headers=IMG_CACHE if final else {"Cache-Control": "no-store"})
 
     @app.get("/photo/{lib_id}/{uuid}")
     def photo(lib_id: str, uuid: str):

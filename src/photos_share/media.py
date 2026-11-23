@@ -14,16 +14,72 @@ THUMB_PX = 640
 FULL_PX = 2048
 VIDEO_EXT = {".mov", ".mp4", ".m4v"}
 
-# Limit concurrent sips runs so a fast scroll doesn't thrash the HDD.
-_sips_slots = threading.Semaphore(3)
+# Limit concurrent sips runs so a fast scroll doesn't thrash the HDD. Background work
+# (preparing every thumbnail ahead of time) gets its own single, low-priority slot.
+_sips_slots = threading.Semaphore(4)
+_background_slots = threading.Semaphore(1)
 _out_locks: defaultdict[Path, threading.Lock] = defaultdict(threading.Lock)
+_background = ThreadPoolExecutor(max_workers=1, thread_name_prefix="thumbs")
+_queued: set[Path] = set()
+_queued_lock = threading.Lock()
+_warmed: dict[str, int] = {}   # library id → rev whose thumbnails are being prepared
 
 
-def thumbnail(lib: Library, asset: Asset) -> Path | None:
+def _thumb_path(lib: Library, asset: Asset) -> Path:
+    return lib.cache_dir / "thumb" / f"{asset.uuid}.jpg"
+
+
+def thumbnail(lib: Library, asset: Asset, background: bool = False) -> Path | None:
     sources = lib.derivatives(asset.uuid)
     if not asset.is_movie:
         sources += [p for p in (lib.abs(asset.edited), lib.abs(asset.original)) if p]
-    return _render(sources, lib.cache_dir / "thumb" / f"{asset.uuid}.jpg", THUMB_PX)
+    return _render(sources, _thumb_path(lib, asset), THUMB_PX, background)
+
+
+def thumbnail_now(lib: Library, asset: Asset) -> tuple[Path | None, bool]:
+    """A thumbnail without waiting: (path, final). When the proper one isn't made yet,
+    Photos' own smallest preview is sent as is (final=False, so browsers don't keep it)
+    and the proper one is made in the background for next time."""
+    out = _thumb_path(lib, asset)
+    if out.exists():
+        return out, True
+    previews = lib.derivatives(asset.uuid)
+    if previews:
+        _queue(out, lambda: thumbnail(lib, asset, background=True))
+        return previews[-1], False      # smallest
+    return thumbnail(lib, asset), True
+
+
+def _queue(out: Path, job) -> None:
+    with _queued_lock:
+        if out in _queued:
+            return
+        _queued.add(out)
+
+    def run():
+        try:
+            job()
+        finally:
+            with _queued_lock:
+                _queued.discard(out)
+    _background.submit(run)
+
+
+def prepare_thumbnails(lib: Library) -> None:
+    """Make every thumbnail ahead of time (newest first), once per version of the library,
+    so later visits load instantly. Low priority; on-demand requests go first."""
+    if _warmed.get(lib.id) == lib.rev:
+        return
+    _warmed[lib.id] = rev = lib.rev
+    assets = list(lib.assets)
+
+    def run():
+        for a in assets:
+            if lib.rev != rev:       # the library changed: a newer pass takes over
+                return
+            if not _thumb_path(lib, a).exists():
+                thumbnail(lib, a, background=True)
+    threading.Thread(target=run, daemon=True, name=f"prepare-{lib.name}").start()
 
 
 def full_image(lib: Library, asset: Asset) -> Path | None:
@@ -33,7 +89,7 @@ def full_image(lib: Library, asset: Asset) -> Path | None:
     return _render(sources, lib.cache_dir / "full" / f"{asset.uuid}.jpg", FULL_PX)
 
 
-def _render(sources: list[Path], out: Path, max_px: int) -> Path | None:
+def _render(sources: list[Path], out: Path, max_px: int, background: bool = False) -> Path | None:
     if out.exists():
         return out
     with _out_locks[out]:
@@ -44,10 +100,11 @@ def _render(sources: list[Path], out: Path, max_px: int) -> Path | None:
             if src.suffix.lower() in VIDEO_EXT:
                 continue
             tmp = out.with_suffix(".tmp.jpg")
-            with _sips_slots:
+            nice = ["nice", "-n", "15"] if background else []
+            with _background_slots if background else _sips_slots:
                 r = subprocess.run(
-                    ["sips", "-s", "format", "jpeg", "-s", "formatOptions", "82",
-                     "-Z", str(max_px), str(src), "--out", str(tmp)],
+                    nice + ["sips", "-s", "format", "jpeg", "-s", "formatOptions", "82",
+                            "-Z", str(max_px), str(src), "--out", str(tmp)],
                     capture_output=True,
                 )
             if r.returncode == 0 and tmp.exists():

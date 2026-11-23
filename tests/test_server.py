@@ -131,3 +131,67 @@ def test_hidden_photos_flagged_and_kept_out_of_people_counts(make_client, fake_i
 
 def test_hidden_photos_unreachable_without_option(client, fake_id):
     assert client.get(f"/thumb/{fake_id}/HD").status_code == 404
+
+
+# ---- first visits: Photos' own preview at once, the proper thumbnail made behind it ----------
+
+def _add_preview(libs_dir, uuid, name="_1_102_o.jpeg"):
+    from conftest import _jpeg
+    d = libs_dir / "Fake.photoslibrary" / "resources" / "derivatives" / "masters" / uuid[0]
+    d.mkdir(parents=True, exist_ok=True)
+    _jpeg(d / f"{uuid}{name}")
+
+
+def test_first_thumbnail_is_photos_preview_not_kept_by_browser(make_client, fake_id, libs_dir):
+    import time
+    from photos_share import media
+    _add_preview(libs_dir, "P1")
+    client, col = make_client()
+    r = client.get(f"/thumb/{fake_id}/P1")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+    lib = col.get(fake_id)
+    out = media._thumb_path(lib, lib.by_uuid["P1"])
+    for _ in range(100):               # made in the background
+        if out.exists():
+            break
+        time.sleep(0.05)
+    assert out.exists()
+    r = client.get(f"/thumb/{fake_id}/P1")
+    assert r.headers["cache-control"].startswith("private, max-age")   # the proper one now
+
+
+def test_previews_folders_listed_once(make_client, fake_id, libs_dir, monkeypatch):
+    import os
+    from photos_share import library
+    _add_preview(libs_dir, "P1")
+    _add_preview(libs_dir, "P2")
+    client, col = make_client()
+    lib = col.get(fake_id)
+    lib.ensure_open()
+    calls = []
+    real = os.listdir
+    monkeypatch.setattr(library.os, "listdir", lambda d: calls.append(d) or real(d))
+    assert lib.derivatives("P1") and lib.derivatives("P2") and not lib.derivatives("MV")
+    first = len(calls)
+    assert first <= 4                  # each folder once (2 roots + 2 subfolders here)
+    lib.derivatives("P1")
+    assert len(calls) == first         # not again per photo
+
+
+def test_thumbnails_prepared_ahead(make_client, fake_id):
+    import time
+    from photos_share import media
+    client, col = make_client()
+    assert client.get(f"/api/libraries/{fake_id}").status_code in (200, 202)
+    lib = col.get(fake_id)
+    for _ in range(100):
+        if lib.state == "ready":
+            break
+        time.sleep(0.05)
+    client.get(f"/api/libraries/{fake_id}")
+    want = [media._thumb_path(lib, a) for a in lib.assets if not a.is_movie]
+    for _ in range(200):
+        if all(p.exists() for p in want):
+            break
+        time.sleep(0.05)
+    assert all(p.exists() for p in want)
