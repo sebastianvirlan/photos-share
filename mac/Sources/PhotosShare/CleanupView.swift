@@ -79,11 +79,7 @@ struct CleanupView: View {
                             symbol: "square.on.square")
             }
         case .comparing:
-            VStack(spacing: 10) {
-                ProgressView()
-                Text("Comparing the two libraries…").font(.headline)
-                Text("Big libraries on a hard drive can take a minute.").foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            CompareProgress(model: model)
         case .failed(let message):
             placeholder(message, symbol: "exclamationmark.triangle")
         case .ready, .acting, .done:
@@ -147,7 +143,10 @@ struct CleanupView: View {
         HStack(spacing: 10) {
             if case .acting(let action) = model.state {
                 ProgressView().controlSize(.small)
-                Text(action == .delete ? "Re-checking, then deleting…" : "Re-checking, then working…")
+                let p = model.progress
+                Text((action == .delete ? "Re-checking, then deleting" : "Re-checking, then working")
+                     + (p.phase.isEmpty ? "…" : ": \(model.progressInfo.title)"
+                        + (p.total > 0 ? " \(p.done.formatted()) of \(p.total.formatted())" : "…")))
                 Spacer()
             } else if case .done = model.state {
                 Text("Done. Compare again to check the result.").foregroundStyle(.secondary)
@@ -372,5 +371,43 @@ struct CompareSheet: View {
         let f = ISO8601DateFormatter()
         guard let d = f.date(from: iso) else { return iso }
         return d.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+
+/// What Compare is doing: the step, a bar when the amount of work is known, elapsed time.
+struct CompareProgress: View {
+    let model: CleanupModel
+
+    var body: some View {
+        let p = model.progress
+        let info = model.progressInfo
+        VStack(spacing: 12) {
+            Group {
+                if p.total > 0 {
+                    ProgressView(value: Double(p.done), total: Double(p.total))
+                } else {
+                    ProgressView(value: nil as Double?)   // indeterminate bar
+                }
+            }
+            .progressViewStyle(.linear)
+            .frame(width: 360)
+            Text(info.title).font(.headline)
+            if p.total > 0 {
+                Text("\(p.done.formatted()) of \(p.total.formatted())").monospacedDigit()
+            }
+            if !info.detail.isEmpty {
+                Text(info.detail).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+            }
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                let s = max(0, Int(ctx.date.timeIntervalSince(model.started)))
+                Text("Step \(info.step) of 4 · \(s / 60):\(String(format: "%02d", s % 60)) so far")
+                    .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+            }
+            Button("Cancel") { model.cancelCompare() }
+                .help("Stop comparing. Nothing has been changed.")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

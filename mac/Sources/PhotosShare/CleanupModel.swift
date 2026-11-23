@@ -74,6 +74,42 @@ final class CleanupModel {
     private(set) var report: CleanupReport?
     var message: (ok: Bool, text: String)?
 
+    /// What photos-dedupe is doing right now (while comparing or acting), and since when.
+    struct Progress: Equatable { var phase = ""; var done = 0; var total = 0; var library = "" }
+    private(set) var progress = Progress()
+    private(set) var started = Date()
+    private var process: Process?
+    private var cancelling = false
+
+    /// Step, title and detail for the current phase.
+    var progressInfo: (step: Int, title: String, detail: String) {
+        let p = progress
+        let isSource = p.library == source?.deletingPathExtension().lastPathComponent
+        switch p.phase {
+        case "opening":
+            return (isSource ? 1 : 2, "Opening “\(p.library)”",
+                    "Photos’ database is read in one go: a minute or two for a big library on a hard drive.")
+        case "reading":
+            return (isSource ? 1 : 2, "Reading “\(p.library)”", "Noting each photo’s fingerprint, name, size and date.")
+        case "matching":
+            return (3, "Matching the two libraries", "")
+        case "checking":
+            return (3, "Checking the files of photos in both",
+                    "Each copy is looked at on disk, so a photo is only called safe if its file really arrived.")
+        case "thumbnails":
+            return (4, "Finding previews", "")
+        default:
+            return (1, "Starting", "")
+        }
+    }
+
+    /// Stops a comparison (nothing has changed yet, so this is always safe).
+    func cancelCompare() {
+        guard case .comparing = state else { return }
+        cancelling = true
+        process?.terminate()
+    }
+
     var canCompare: Bool {
         guard let source, let dest else { return false }
         if case .comparing = state { return false }
@@ -112,13 +148,19 @@ final class CleanupModel {
         guard let source, let dest else { return }
         state = .comparing
         message = nil
+        cancelling = false
         do {
             report = try await dedupe([source.path, dest.path, "--json"])
             state = .ready
         } catch {
-            report = nil
-            state = .failed(error.localizedDescription)
+            if cancelling {
+                state = report == nil ? .idle : .ready
+            } else {
+                report = nil
+                state = .failed(error.localizedDescription)
+            }
         }
+        cancelling = false
     }
 
     /// Every action re-reads both libraries first, so it never acts on a stale comparison.
@@ -146,21 +188,52 @@ final class CleanupModel {
         }
     }
 
+    /// Runs photos-dedupe, following its progress lines; the last other line is the result.
     private func dedupe(_ args: [String]) async throws -> CleanupReport {
-        let (code, out, err) = try await Tools.run("photos-dedupe", args)
-        if let obj = try? JSONSerialization.jsonObject(with: out) as? [String: Any],
-           let e = obj["error"] as? String {
-            throw CleanupFailure(e)
+        progress = Progress()
+        started = Date()
+        return try await withCheckedThrowingContinuation { cont in
+            var result: Data?
+            do {
+                process = try Tools.stream("photos-dedupe", args + ["--progress"],
+                    onLine: { [weak self] line in
+                        guard let data = line.data(using: .utf8),
+                              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+                        if obj["event"] as? String == "progress" {
+                            self?.progress = Progress(phase: obj["phase"] as? String ?? "",
+                                                      done: obj["done"] as? Int ?? 0,
+                                                      total: obj["total"] as? Int ?? 0,
+                                                      library: obj["library"] as? String ?? "")
+                        } else {
+                            result = data
+                        }
+                    },
+                    onExit: { [weak self] code, stderr in
+                        self?.process = nil
+                        if let result, let obj = try? JSONSerialization.jsonObject(with: result) as? [String: Any],
+                           let e = obj["error"] as? String {
+                            return cont.resume(throwing: CleanupFailure(e))
+                        }
+                        guard code == 0, let result else {
+                            return cont.resume(throwing: CleanupFailure(
+                                stderr.split(separator: "\n").last.map(String.init)
+                                ?? "photos-dedupe failed (code \(code))."))
+                        }
+                        do {
+                            cont.resume(returning: try JSONDecoder().decode(CleanupReport.self, from: result))
+                        } catch {
+                            cont.resume(throwing: CleanupFailure("Unexpected output from photos-dedupe: \(error.localizedDescription)"))
+                        }
+                    })
+            } catch {
+                cont.resume(throwing: error)
+            }
         }
-        guard code == 0 else {
-            throw CleanupFailure(err.split(separator: "\n").last.map(String.init)
-                                 ?? "photos-dedupe failed (code \(code)).")
-        }
-        do {
-            return try JSONDecoder().decode(CleanupReport.self, from: out)
-        } catch {
-            throw CleanupFailure("Unexpected output from photos-dedupe: \(error.localizedDescription)")
-        }
+    }
+
+    /// For `--snapshot` renders only.
+    func showProgressForSnapshot(_ p: Progress, since: Date) {
+        state = .comparing; progress = p; started = since
     }
 }
 

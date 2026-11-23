@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import sys
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -136,13 +137,29 @@ def check_pair(s: Item, d: Item, how: str) -> str | None:
     return None
 
 
+class Progress:
+    """Calls `report(phase, done, total, library)` at most a few times a second."""
+
+    def __init__(self, report=None, every: float = 0.25):
+        self.report, self.every, self.last = report, every, 0.0
+
+    def __call__(self, phase: str, done: int = 0, total: int = 0, library: str = "",
+                 force: bool = False) -> None:
+        now = time.monotonic()
+        if self.report and (force or done == total or now - self.last >= self.every):
+            self.last = now
+            self.report(phase, done, total, library)
+
+
 def verify(r: Result, source: list[Item], dest: list[Item], progress=None) -> Result:
     """Move matched photos whose files don't check out into `needs_review`."""
+    progress = progress or Progress()
     by_dest = {d.uuid: d for d in dest}
     keep = []
+    n = len(r.matched)
+    progress("checking", 0, n, force=True)
     for i, s in enumerate(r.matched):
-        if progress and i % 500 == 0:
-            progress(i, len(r.matched))
+        progress("checking", i, n)
         d_uuid, how = r.pairs[s.uuid]
         reason = check_pair(s, by_dest[d_uuid], how)
         if reason:
@@ -152,19 +169,30 @@ def verify(r: Result, source: list[Item], dest: list[Item], progress=None) -> Re
         else:
             keep.append(s)
     r.matched = keep
+    progress("checking", n, n, force=True)
     return r
 
 
 def compare(src: Path, dst: Path, progress=None) -> Result:
     """Read both libraries, match, then check the files of every match."""
-    s_items, d_items = load(src), load(dst)
+    progress = progress or Progress()
+    s_items, d_items = load(src, progress), load(dst, progress)
+    progress("matching", force=True)
     return verify(match(s_items, d_items), s_items, d_items, progress)
 
 
-def load(path: Path) -> list[Item]:
+def load(path: Path, progress=None) -> list[Item]:
     import osxphotos
+    progress = progress or Progress()
+    progress("opening", library=path.stem, force=True)
     db = osxphotos.PhotosDB(dbfile=str(path), _skip_searchinfo=True)
-    return [Item.from_photo(p) for p in db.photos()]  # excludes Recently Deleted
+    photos = db.photos()  # excludes Recently Deleted
+    out = []
+    for i, p in enumerate(photos):
+        progress("reading", i, len(photos), path.stem)
+        out.append(Item.from_photo(p))
+    progress("reading", len(photos), len(photos), path.stem, force=True)
+    return out
 
 
 def report(r: Result, src: Path, dst: Path) -> str:
@@ -451,6 +479,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--yes", action="store_true", help="don't ask for confirmation in the terminal")
     ap.add_argument("--json", action="store_true",
                     help="machine-readable output on stdout (for the Mac app); actions need --yes")
+    ap.add_argument("--progress", action="store_true",
+                    help="with --json: progress lines ({\"event\": \"progress\", ...}) before the result")
     args = ap.parse_args(argv)
     logging.getLogger("osxphotos").setLevel(logging.ERROR)
     acting = args.mark or args.delete or args.trash_library
@@ -473,9 +503,21 @@ def main(argv: list[str] | None = None) -> None:
     if args.json and acting and not args.yes:
         fail("--json with an action needs --yes (confirm in the app first).")
 
-    say("Reading both libraries… (a minute for big ones on an HDD)")
+    def show(phase, done, total, library):
+        if args.json and args.progress:
+            print(json.dumps({"event": "progress", "phase": phase, "done": done,
+                              "total": total, "library": library}), flush=True)
+        elif not args.json:
+            text = {"opening": f"Opening “{library}”…", "matching": "Matching…",
+                    "reading": f"Reading “{library}”… {done:,}/{total:,}",
+                    "checking": f"Checking files… {done:,}/{total:,}",
+                    "thumbnails": "Finding previews…"}.get(phase, phase)
+            print(f"\r\033[K{text}", end="" if phase in ("reading", "checking") else "\n",
+                  file=sys.stderr, flush=True)
+
+    progress = Progress(show, every=0.25 if args.json else 0.1)
     try:
-        r = compare(src, dst, progress=lambda i, n: say(f"Checking files… {i:,}/{n:,}"))
+        r = compare(src, dst, progress=progress)
     except Exception as e:  # noqa: BLE001
         fail(f"couldn’t read the libraries: {e}")
     if not args.json:
@@ -512,6 +554,7 @@ def main(argv: list[str] | None = None) -> None:
         fail(str(e))
 
     if args.json:
+        progress("thumbnails", force=True)
         out = to_json(r, src, dst)
         out["outcome"] = outcome
         print(json.dumps(out), flush=True)

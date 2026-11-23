@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import time
+import types
 
 import pytest
 
@@ -93,7 +94,7 @@ def two_libs(tmp_path, monkeypatch):
                   item("C", "f3"), item("R", "f4", path=f(src, "r"))],
             dst: [item("E9", "f1", path=f(dst, "e9")), item("E8", "f2"),
                   item("E7", "f4", path=None)]}     # R's copy has no file in DEST
-    monkeypatch.setattr(dedupe, "load", lambda p: data[p])
+    monkeypatch.setattr(dedupe, "load", lambda p, progress=None: data[p])
     monkeypatch.setattr(dedupe, "system_library", lambda: None)
     return src, dst
 
@@ -137,3 +138,29 @@ def test_thumbnail_map_prefers_small_previews(tmp_path):
     (lib / "resources/derivatives/masters/A/AB_4_5005_c.jpeg").write_bytes(b"x")
     m = dedupe.thumbnail_map(lib)
     assert m["AB"].endswith("masters/A/AB_4_5005_c.jpeg") and m["AC"].endswith("AC_1_105_c.jpeg")
+
+
+def test_dedupe_progress_lines_come_before_the_result(two_libs, capsys):
+    src, dst = two_libs
+    dedupe.main([str(src), str(dst), "--json", "--progress"])
+    lines = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
+    events = [x for x in lines if x.get("event") == "progress"]
+    assert [e["phase"] for e in events][:1] == ["matching"]        # load is faked here
+    checks = [e for e in events if e["phase"] == "checking"]
+    assert checks[0]["done"] == 0 and checks[-1]["done"] == checks[-1]["total"] == 2
+    assert events[-1]["phase"] == "thumbnails"
+    assert "event" not in lines[-1] and lines[-1]["source_name"] == "Src"
+
+
+def test_load_reports_each_library(monkeypatch, tmp_path):
+    import osxphotos
+    photos = [types.SimpleNamespace(uuid=str(i), fingerprint=None, original_filename="a.jpg",
+                                    original_filesize=1, date=None, hasadjustments=False,
+                                    hidden=False, path=None, live_photo=False, has_raw=False)
+              for i in range(3)]
+    monkeypatch.setattr(osxphotos, "PhotosDB", lambda **k: types.SimpleNamespace(photos=lambda: photos))
+    seen = []
+    items = dedupe.load(tmp_path / "Mine.photoslibrary",
+                        dedupe.Progress(lambda *a: seen.append(a), every=0))
+    assert len(items) == 3
+    assert seen[0] == ("opening", 0, 0, "Mine") and seen[-1] == ("reading", 3, 3, "Mine")
