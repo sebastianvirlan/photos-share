@@ -74,10 +74,9 @@ final class CleanupModel {
     private(set) var report: CleanupReport?
     var message: (ok: Bool, text: String)?
 
-    /// What photos-dedupe is doing right now (while comparing or acting), and since when.
+    /// What photos-dedupe is doing right now (while comparing or acting).
     struct Progress: Equatable { var phase = ""; var done = 0; var total = 0; var library = "" }
     private(set) var progress = Progress()
-    private(set) var started = Date()
     private var process: Process?
     private var cancelling = false
 
@@ -191,7 +190,6 @@ final class CleanupModel {
     /// Runs photos-dedupe, following its progress lines; the last other line is the result.
     private func dedupe(_ args: [String]) async throws -> CleanupReport {
         progress = Progress()
-        started = Date()
         return try await withCheckedThrowingContinuation { cont in
             var result: Data?
             do {
@@ -232,8 +230,8 @@ final class CleanupModel {
     }
 
     /// For `--snapshot` renders only.
-    func showProgressForSnapshot(_ p: Progress, since: Date) {
-        state = .comparing; progress = p; started = since
+    func showProgressForSnapshot(_ p: Progress) {
+        state = .comparing; progress = p
     }
 }
 

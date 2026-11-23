@@ -20,8 +20,7 @@ enum Snapshot {
         render(CleanupView(model: chosen).frame(width: 900, height: 600), to: dir, name: "cleanup-chosen")
         let comparing = CleanupModel()
         comparing.prepare(source: chosen.source, dest: chosen.dest)
-        comparing.showProgressForSnapshot(.init(phase: "checking", done: 4_210, total: 11_873),
-                                          since: Date().addingTimeInterval(-97))
+        comparing.showProgressForSnapshot(.init(phase: "checking", done: 4_210, total: 11_873))
         render(CleanupView(model: comparing).frame(width: 900, height: 600), to: dir, name: "cleanup-comparing")
 
         let results = CleanupModel()

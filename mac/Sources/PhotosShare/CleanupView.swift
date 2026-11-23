@@ -375,7 +375,7 @@ struct CompareSheet: View {
 }
 
 
-/// What Compare is doing: the step, a bar when the amount of work is known, elapsed time.
+/// What Compare is doing: the step, and a bar when the amount of work is known.
 struct CompareProgress: View {
     let model: CleanupModel
 
@@ -400,11 +400,7 @@ struct CompareProgress: View {
                 Text(info.detail).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     .frame(maxWidth: 420)
             }
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                let s = max(0, Int(ctx.date.timeIntervalSince(model.started)))
-                Text("Step \(info.step) of 4 · \(s / 60):\(String(format: "%02d", s % 60)) so far")
-                    .font(.callout).foregroundStyle(.secondary).monospacedDigit()
-            }
+            Text("Step \(info.step) of 4").font(.callout).foregroundStyle(.secondary)
             Button("Cancel") { model.cancelCompare() }
                 .help("Stop comparing. Nothing has been changed.")
         }
