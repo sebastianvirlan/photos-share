@@ -8,11 +8,28 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+import logging
+
 from . import media
 from .auth import COOKIE, COOKIE_DAYS, Auth, login_page
 from .library import Asset, Collection, Library
 
 STATIC = Path(__file__).parent / "static"
+log = logging.getLogger("photos_share")
+
+
+def _missing(what: str, asset: Asset, rel: str | None) -> HTMLResponse:
+    """A file the page asked for isn't there: say why in the terminal (paths stay on this
+    Mac), and give the browser a readable page instead of an error file to save."""
+    log.warning("%s missing for %s (%s): %s", what, asset.filename or "?", asset.uuid,
+                rel or "Photos has no file recorded")
+    return HTMLResponse(
+        "<!doctype html><meta name=viewport content='width=device-width'>"
+        "<body style='font:16px -apple-system,sans-serif;padding:24px'>"
+        f"<p>This photo’s {what.lower()} isn’t available.</p>"
+        "<p><a href='javascript:history.back()'>Back</a></p>", status_code=404)
+
+
 IMG_CACHE = {"Cache-Control": "private, max-age=604800"}
 
 
@@ -116,6 +133,7 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
         lib, asset = lookup(lib_id, uuid)
         path, final = media.thumbnail_now(lib, asset)
         if path is None:
+            _missing("Thumbnail", asset, asset.original)
             raise HTTPException(404)
         # A stand-in preview mustn't be kept by the browser: the proper one comes next time.
         return FileResponse(path, media_type="image/jpeg",
@@ -126,6 +144,7 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
         lib, asset = lookup(lib_id, uuid)
         path = media.full_image(lib, asset)
         if path is None:
+            _missing("Full-size image", asset, asset.edited or asset.original)
             raise HTTPException(404)
         return FileResponse(path, media_type="image/jpeg", headers=IMG_CACHE)
 
@@ -169,7 +188,7 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
         lib, asset = lookup(lib_id, uuid)
         path = lib.abs(asset.original)
         if path is None:
-            raise HTTPException(404)
+            return _missing("Original file", asset, asset.original)
         return FileResponse(path, filename=asset.filename or path.name)
 
     @app.get("/download/{lib_id}/{uuid}")
@@ -181,7 +200,7 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
         lib, asset = lookup(lib_id, uuid)
         path = lib.abs(asset.edited) or lib.abs(asset.original)
         if path is None:
-            raise HTTPException(404)
+            return _missing("File", asset, asset.edited or asset.original)
         stem = Path(asset.filename).stem if asset.filename else path.stem
         if asset.edited and lib.abs(asset.edited):
             name = f"{stem} (edited){path.suffix.lower()}"
@@ -196,6 +215,10 @@ def _asset_json(a: Asset) -> dict:
     """Compact per-asset payload; optional keys are omitted when empty."""
     out = {"u": a.uuid, "d": a.date, "w": a.width, "h": a.height,
            "m": a.is_movie, "l": bool(a.live), "e": bool(a.edited)}
+    if not a.original and not a.edited:
+        out["nf"] = True          # no file to download (only Photos' previews)
+    elif not a.original:
+        out["no"] = True          # edited version only: no original to offer
     if a.favorite:
         out["f"] = True
     if a.kinds:

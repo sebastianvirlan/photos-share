@@ -441,10 +441,10 @@ function openViewer(uuid) {
   liveBtn.hidden = !a.l;
   liveBtn.classList.remove("on");
   // ↓ gives the photo as shown (with its edits); edited ones also offer the original.
-  dl.hidden = !lib.downloads;
+  dl.hidden = !lib.downloads || !!a.nf;
   dl.href = `/download/${lib.id}/${a.u}`;
   dl.title = a.e ? "Download with edits" : "Download";
-  dlOrig.hidden = !lib.downloads || !a.e;
+  dlOrig.hidden = !lib.downloads || !a.e || !!a.no || !!a.nf;
   dlOrig.href = `/original/${lib.id}/${a.u}`;
 
   if (a.m) showVideo(a, thumbUrl(a));

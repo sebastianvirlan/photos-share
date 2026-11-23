@@ -195,3 +195,22 @@ def test_thumbnails_prepared_ahead(make_client, fake_id):
             break
         time.sleep(0.05)
     assert all(p.exists() for p in want)
+
+
+def test_missing_original_gives_a_readable_page_and_is_flagged(make_client, fake_id, libs_dir, caplog):
+    client, col = make_client(downloads=True)
+    lib = col.get(fake_id)
+    client.get(f"/api/libraries/{fake_id}")
+    (libs_dir / "Fake.photoslibrary" / "originals" / "P" / "P2.jpeg").unlink()   # edited photo
+    r = client.get(f"/original/{fake_id}/P2")
+    assert r.status_code == 404 and r.headers["content-type"].startswith("text/html")
+    assert "isn’t available" in r.text
+    assert "Original file missing" in caplog.text and "originals/P/P2.jpeg" in caplog.text
+    assert client.get(f"/download/{fake_id}/P2").status_code == 200   # the edited version still
+
+    from dataclasses import replace
+    from photos_share.server import _asset_json
+    edited_only = replace(lib.by_uuid["P2"], original=None)   # Photos has no original recorded
+    assert _asset_json(edited_only).get("no") is True and "nf" not in _asset_json(edited_only)
+    nothing = replace(edited_only, edited=None)
+    assert _asset_json(nothing).get("nf") is True
