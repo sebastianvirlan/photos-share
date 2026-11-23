@@ -58,7 +58,7 @@ function groupBy(list, key) {
   }
   return out;
 }
-const cover = items => items.find(a => !a.m) || items[0];
+const cover = items => items.find(a => !a.m && !a.nf) || items.find(a => !a.nf) || items[0];
 const itemCount = count => `${n(count)} ${count === 1 ? "item" : "items"}`;
 // Sidebar "Media Types" (plus Favourites), in Photos' order: [label, predicate]
 const MEDIA = {
@@ -413,7 +413,8 @@ function renderAlbum(el) {
 
 function tile(a) {
   return h("a", { class: "tile", href: viewerHash(a.u), onclick: () => { viewerPushed = true; } },
-    h("img", { src: thumbUrl(a), loading: "lazy", decoding: "async", alt: "" }),
+    a.nf ? h("span", { class: "nofile", title: "Photos has no file for this item" }, "⌀")
+         : h("img", { src: thumbUrl(a), loading: "lazy", decoding: "async", alt: "" }),
     a.m ? h("span", { class: "badge play" }, "▶") : null,
     a.l ? h("span", { class: "badge live" }, "LIVE") : null,
     a.f ? h("span", { class: "badge fav" }, "♥") : null);
@@ -447,7 +448,11 @@ function openViewer(uuid) {
   dlOrig.hidden = !lib.downloads || !a.e || !!a.no || !!a.nf;
   dlOrig.href = `/original/${lib.id}/${a.u}`;
 
-  if (a.m) showVideo(a, thumbUrl(a));
+  if (a.nf) {
+    stage.replaceChildren(h("div", { class: "v-nofile" },
+      h("div", {}, "This item has no file in the library."),
+      h("div", { class: "sub" }, "Photos lists it, but has no photo or preview for it.")));
+  } else if (a.m) showVideo(a, thumbUrl(a));
   else {
     const img = h("img", { src: thumbUrl(a), alt: "", draggable: "false" });
     stage.replaceChildren(img);
@@ -457,7 +462,7 @@ function openViewer(uuid) {
   }
   for (const j of [i + 1, i - 1]) {
     const nb = scope.list[j];
-    if (nb && !nb.m) new Image().src = `/photo/${lib.id}/${nb.u}`;
+    if (nb && !nb.m && !nb.nf) new Image().src = `/photo/${lib.id}/${nb.u}`;
   }
 }
 

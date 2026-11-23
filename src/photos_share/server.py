@@ -102,7 +102,8 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
             item = {"id": lib.id, "name": lib.name, "state": lib.state,
                     "available": lib.available, "rev": lib.rev}
             if lib.state == "ready" and lib.assets:
-                item.update(count=len(lib.assets), cover=lib.assets[0].uuid,
+                item.update(count=len(lib.assets), cover=next((a.uuid for a in lib.assets if a.original or a.edited),
+                                           lib.assets[0].uuid),
                             first=lib.assets[-1].date, last=lib.assets[0].date)
             out.append(item)
         return out

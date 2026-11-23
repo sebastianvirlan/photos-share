@@ -214,3 +214,14 @@ def test_missing_original_gives_a_readable_page_and_is_flagged(make_client, fake
     assert _asset_json(edited_only).get("no") is True and "nf" not in _asset_json(edited_only)
     nothing = replace(edited_only, edited=None)
     assert _asset_json(nothing).get("nf") is True
+
+
+def test_library_cover_skips_items_without_files(make_client, fake_id):
+    from dataclasses import replace
+    client, col = make_client()
+    client.get(f"/api/libraries/{fake_id}")
+    lib = col.get(fake_id)
+    first = lib.assets[0]
+    lib.assets[0] = replace(first, original=None, edited=None)
+    cover = next(l for l in client.get("/api/libraries").json() if l["id"] == fake_id)["cover"]
+    assert cover == lib.assets[1].uuid
