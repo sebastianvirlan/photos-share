@@ -52,7 +52,7 @@ def test_screenshots_shown_when_enabled(libs_dir):
 def test_albums_keep_only_visible_photos_and_drop_empty_ones(libs_dir):
     lib = Library((libs_dir / "Fake.photoslibrary"), Options())
     lib.load_cached()
-    assert lib.albums == [{"title": "Trip", "uuids": ["P1"]}]
+    assert lib.albums == [{"title": "Trip", "uuids": ["P1"], "folder": ""}]
 
 
 def test_person_avatar_dropped_when_its_photo_is_hidden(libs_dir):
@@ -198,7 +198,7 @@ def test_hidden_excluded_by_default_and_included_on_request(libs_dir):
     lib = Library(libs_dir / "Fake.photoslibrary", Options())
     lib.load_cached()
     assert "HD" not in lib.by_uuid
-    assert lib.albums == [{"title": "Trip", "uuids": ["P1"]}]
+    assert lib.albums == [{"title": "Trip", "uuids": ["P1"], "folder": ""}]
     lib = Library(libs_dir / "Fake.photoslibrary", Options(show_hidden=True))
     lib.load_cached()
     assert lib.by_uuid["HD"].is_hidden and lib.assets[-1].uuid == "HD"
