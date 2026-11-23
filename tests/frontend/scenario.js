@@ -67,6 +67,17 @@ const go = async h => { location.hash = h; await tick(); };
     els["#v-close"].onclick();
     await tick();
 
+    // a thumbnail that fails is asked for again a few times, then left alone
+    const img = new El("img");
+    img.src = "/thumb/abc/U1";
+    const later = setTimeout;
+    setTimeout = f => { f(); return 0; };
+    document.listeners.error({ target: img });
+    check("failed image is retried", img.src === "/thumb/abc/U1?retry=1", img.src);
+    for (let i = 0; i < 6; i++) document.listeners.error({ target: img });
+    check("retries stop after a few tries", img.src === "/thumb/abc/U1?retry=4", img.src);
+    setTimeout = later;
+
     await checkForUpdates();
     const pill = document.body.children.find(c => c.attrs?.class === "update");
     check("new photos pill appears when the server has a newer index", !!pill);

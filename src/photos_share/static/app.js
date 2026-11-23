@@ -567,4 +567,19 @@ stage.addEventListener("touchend", e => {
 
 // Start last: route() uses the viewer elements declared above.
 addEventListener("hashchange", route);
+// A thumbnail that fails (a slow first load timing out, a dropped connection) would stay
+// broken: browsers never ask again. Retry a few times, waiting longer each time.
+const RETRY_DELAYS = [1500, 4000, 10000, 20000];
+document.addEventListener("error", e => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.isConnected) return;
+  const tries = Number(img.dataset.tries || 0);
+  if (tries >= RETRY_DELAYS.length) return;
+  img.dataset.tries = tries + 1;
+  const base = img.src.replace(/[?&]retry=\d+$/, "");
+  setTimeout(() => {
+    if (img.isConnected) img.src = `${base}${base.includes("?") ? "&" : "?"}retry=${tries + 1}`;
+  }, RETRY_DELAYS[tries]);
+}, true);  // capture: image errors don't bubble
+
 route();

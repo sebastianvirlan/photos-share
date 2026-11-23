@@ -7,7 +7,7 @@ let scrolledTo = null;
 class El {
   constructor(tag) {
     this.tagName = tag; this.children = []; this.attrs = {}; this.hidden = true;
-    this.textContent = ""; this.listeners = {};
+    this.textContent = ""; this.listeners = {}; this.dataset = {}; this.src = "";
     this.style = { setProperty() {}, set cssText(v) {} };
     const cl = new Set();
     this.classList = { add: c => cl.add(c), remove: c => cl.delete(c), has: c => cl.has(c),
@@ -36,7 +36,9 @@ class El {
 
 const els = {};
 var document = { querySelector: s => (els[s] ??= new El(s)), createElement: t => new El(t),
-  documentElement: new El("html"), body: new El("body"), head: new El("head"), title: "" };
+  documentElement: new El("html"), body: new El("body"), head: new El("head"), title: "",
+  listeners: {}, addEventListener(ev, f) { this.listeners[ev] = f; } };
+var HTMLImageElement = El;  // the shim's elements stand in for images too
 let onHash = null;
 const fireHash = () => onHash && Promise.resolve().then(onHash).catch(e => errors.push(String(e)));
 var location = { _h: "", get hash() { return this._h; }, set hash(v) { this._h = v; fireHash(); },
