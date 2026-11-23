@@ -37,6 +37,42 @@ enum PhotoKitImport {
         var created: [Created] = []
         var failed: [ImportSummary.Problem] = []
         var cancelled = false
+        /// Photos refused this many in a row and the import stopped (photos-import says why).
+        var refused: Int? = nil
+    }
+
+    /// Stop once Photos has refused this many photos in a row (a full disk refuses everything).
+    static let stopAfter = 5
+
+    /// A run saved after every batch, so an import cut short (quit, crash) can still be
+    /// checked and given its titles, captions and keywords later. Removed once finished.
+    struct Journal: Codable, Identifiable {
+        var id = UUID()
+        let source: String
+        let dest: String
+        let started: Date
+        var run: Run
+
+        static var folder: URL {
+            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Photos Share/Interrupted Imports", isDirectory: true)
+        }
+        var file: URL { Self.folder.appendingPathComponent("\(id.uuidString).json") }
+        var destName: String { URL(fileURLWithPath: dest).deletingPathExtension().lastPathComponent }
+
+        func save() throws {
+            try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
+            try JSONEncoder().encode(self).write(to: file, options: .atomic)
+        }
+        func remove() { try? FileManager.default.removeItem(at: file) }
+
+        /// Imports that stopped before they were checked, oldest first.
+        static func all() -> [Journal] {
+            let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+            return files.filter { $0.pathExtension == "json" }
+                .compactMap { try? JSONDecoder().decode(Journal.self, from: Data(contentsOf: $0)) }
+                .sorted { $0.started < $1.started }
+        }
     }
 
     static let batchSize = 10

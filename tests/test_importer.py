@@ -381,3 +381,83 @@ def test_edited_video_found_under_other_names(lib):
     (lib / "resources" / "renders" / "A" / "A5_2_100_a.MOV").write_bytes(b"v")
     (lib / "resources" / "renders" / "A" / "A5_2_100_a.plist").write_bytes(b"p")  # not a video
     assert importer.edited_image(p).endswith("A5_2_100_a.MOV")
+
+
+# ---- safety: free space, stopping early ---------------------------------------------------
+
+def test_check_space(tmp_path):
+    f = tmp_path / "a.heic"
+    f.write_bytes(b"x" * 1000)
+    importer.check_space(Path("/Volumes/My Disk/D.photoslibrary"), [f], free=2 << 30)
+    with pytest.raises(importer.NotEnoughSpace, match="Not enough space on “My Disk”"):
+        importer.check_space(Path("/Volumes/My Disk/D.photoslibrary"), [f], free=500 << 20)
+
+
+def test_free_space_of_a_library_not_made_yet(tmp_path):
+    assert importer.free_space(tmp_path / "nope" / "D.photoslibrary") > 0
+
+
+def test_stop_reason_says_when_the_disk_is_full():
+    full = importer.stop_reason(Path("/Volumes/Passport/D.photoslibrary"), 10, free=10 << 20)
+    assert full.startswith("“Passport” is full") and "last 10 photos" in full
+    other = importer.stop_reason(Path("/Volumes/Passport/D.photoslibrary"), 5, free=50 << 30)
+    assert other.startswith("Photos refused the last 5 photos in a row")
+
+
+def test_manifest_refuses_when_the_destination_is_full(monkeypatch, lib):
+    monkeypatch.setattr(importer, "_photos", lambda p: [files_photo(lib, "A1")])
+    monkeypatch.setattr(importer, "free_space", lambda p: 100)
+    with pytest.raises(importer.NotEnoughSpace):
+        importer.manifest(lib, ["A1"], lib.with_name("D.photoslibrary"))
+    assert importer.manifest(lib, ["A1"])["items"]       # no destination given: no check
+
+
+def test_run_import_stops_when_photos_refuses_everything(monkeypatch):
+    src_photos = [photo(str(i)) for i in range(150)]   # three batches
+    monkeypatch.setattr(importer, "_photos", lambda p: src_photos)
+    monkeypatch.setattr(importer, "_wait_for_library", lambda p: None)
+    monkeypatch.setattr(importer, "free_space", lambda p: 0)
+
+    def fake_export(p, folder, mode):
+        f = folder / p.original_filename
+        f.write_bytes(b"x")
+        return [f]
+    monkeypatch.setattr(importer, "export_photo", fake_export)
+    calls = []
+
+    class Lib(FakeLibrary):
+        def open(self, path):
+            pass
+
+        def import_photos(self, paths, skip_duplicate_check=False):
+            calls.append(len(paths))
+            return [Imported(Path(x).name) for x in paths] if len(calls) == 1 else []
+
+    monkeypatch.setitem(sys.modules, "photoscript", types.SimpleNamespace(PhotosLibrary=Lib))
+    monkeypatch.setattr(importer, "check_space", lambda dst, paths: None)
+    out = importer.run_import(Path("/s.photoslibrary"), Path("/d.photoslibrary"),
+                              [p.uuid for p in src_photos])
+    assert len(calls) == 2                               # the third batch was never tried
+    assert out["imported"] == 50 and "is full" in out["stopped"]
+
+
+def test_run_import_checks_space_first(monkeypatch):
+    monkeypatch.setattr(importer, "_photos", lambda p: [photo("A")])
+    monkeypatch.setattr(importer, "free_space", lambda p: 0)
+    monkeypatch.setitem(sys.modules, "photoscript", types.SimpleNamespace(
+        PhotosLibrary=lambda: pytest.fail("Photos shouldn’t be opened")))
+    with pytest.raises(importer.NotEnoughSpace):
+        importer.run_import(Path("/s.photoslibrary"), Path("/d.photoslibrary"), ["A"])
+
+
+def test_finish_explains_a_stopped_run(monkeypatch, lib):
+    a = files_photo(lib, "A1")
+    monkeypatch.setattr(importer, "_photos", lambda p: [a] if p.name == "S.photoslibrary"
+                        else [types.SimpleNamespace(**{**a.__dict__, "uuid": "D1"})])
+    monkeypatch.setattr(importer, "free_space", lambda p: 0)
+    out = importer.finish(lib, lib.with_name("D.photoslibrary"),
+                          {"created": [{"source_uuid": "A1", "created": "D1/L0/001"}], "refused": 5})
+    assert "is full" in out["stopped"]
+    out = importer.finish(lib, lib.with_name("D.photoslibrary"),
+                          {"created": [{"source_uuid": "A1", "created": "D1/L0/001"}]})
+    assert out["stopped"] is None

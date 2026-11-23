@@ -36,6 +36,12 @@ The app lives in the menu bar and has two windows:
   - Favourites, location, adjusted dates, album membership, Live Photos and RAW+JPEG pairs
     come across either way.
   - Afterwards, **Open Clean Up** checks what arrived.
+  - Safety: each photo arrives whole or not at all. Before starting, the app checks the
+    destination's disk has room (the files plus a fifth, plus 1 GB). If Photos refuses 5
+    photos in a row (a disk that filled up refuses everything) the import stops and says
+    why, instead of failing the rest. Progress is saved after every batch, so an import cut
+    short by a quit or crash shows **Finish It** next time, to check its photos and copy
+    their titles, captions and keywords.
 - **Find Duplicates:** pick one library and scan it. Exact copies (the same file more than
   once) and look-alikes (the same picture saved again: resized, recompressed, re-exported,
   sent through a messaging app) are shown in groups, with a suggested copy to keep (biggest,

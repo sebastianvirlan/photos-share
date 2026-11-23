@@ -37,6 +37,12 @@ from pathlib import Path
 from . import dedupe
 
 BATCH = 50
+# Photos also writes previews of what it imports, and needs room to work: ask for the files'
+# size plus a fifth, plus 1 GB, before starting.
+SPACE_FACTOR = 1.2
+SPACE_MARGIN = 1 << 30
+# Photos refusing this many photos in a row stops an import (rather than failing the rest).
+STOP_AFTER = 5
 EDITED_MODES = ("skip", "flatten", "both")
 # Adjustments the camera/Photos stores by itself; a photo with only these isn't "edited".
 AUTOMATIC = ("depth", "portrait", "semantic", "orientation", "rawnoise", "smartstyle")
@@ -170,6 +176,60 @@ def apply_details(imported, src, albums_cache: dict, lib) -> None:
         albums_cache[title].add([imported])
 
 
+class NotEnoughSpace(Exception):
+    pass
+
+
+def free_space(path: Path) -> int:
+    """Free bytes on `path`'s disk as Finder counts them (incl. space macOS can purge)."""
+    path = Path(path)
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    try:
+        from Foundation import NSURL, NSURLVolumeAvailableCapacityForImportantUsageKey
+        values, _ = NSURL.fileURLWithPath_(str(path)).resourceValuesForKeys_error_(
+            [NSURLVolumeAvailableCapacityForImportantUsageKey], None)
+        n = values and values.get(NSURLVolumeAvailableCapacityForImportantUsageKey)
+        if n:
+            return int(n)
+    except Exception:  # noqa: BLE001
+        pass
+    return shutil.disk_usage(path).free
+
+
+def volume_name(path: Path) -> str:
+    parts = Path(path).resolve().parts
+    return parts[2] if len(parts) > 2 and parts[1] == "Volumes" else "this Mac"
+
+
+def _gb(n: int) -> str:
+    return f"{n / 1e9:.1f} GB"
+
+
+def space_needed(paths) -> int:
+    total = sum(os.path.getsize(p) for p in paths if p and os.path.exists(p))
+    return int(total * SPACE_FACTOR) + SPACE_MARGIN
+
+
+def check_space(dst: Path, paths, free: int | None = None) -> None:
+    """Raises NotEnoughSpace if `dst`'s disk can't take `paths` (with room to spare)."""
+    need, free = space_needed(paths), free_space(dst) if free is None else free
+    if free < need:
+        raise NotEnoughSpace(
+            f"Not enough space on “{volume_name(dst)}”: this import needs about {_gb(need)}, "
+            f"and {_gb(free)} is free. Free up space, or import fewer photos at a time.")
+
+
+def stop_reason(dst: Path, refused: int, free: int | None = None) -> str:
+    """Why an import stopped after Photos refused `refused` photos in a row."""
+    free = free_space(dst) if free is None else free
+    if free < SPACE_MARGIN:
+        return (f"“{volume_name(dst)}” is full ({_gb(free)} free), so Photos refused the last "
+                f"{refused} photos. Free up space, then select the ones not imported and try again.")
+    return (f"Photos refused the last {refused} photos in a row, so the import stopped. "
+            "Details lists why.")
+
+
 def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip",
                emit=lambda *a, **k: None) -> dict:
     import photoscript
@@ -179,6 +239,10 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
     skipped = [p for p in photos if has_real_edit(p) and edited_mode == "skip"]
     todo = [p for p in photos if p not in skipped]
     total = len(todo)
+    files = [getattr(p, "path", None) for p in todo]
+    if edited_mode != "skip":
+        files += [getattr(p, "path_edited", None) for p in todo if p.hasadjustments]
+    check_space(dst, files)
     emit("start", total=total, skipped_edited=len(skipped))
 
     emit("progress", phase="opening", done=0, total=total)
@@ -191,6 +255,7 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
     done, failed, imported_count, albums_cache = 0, [], 0, {}
     imported_uuids: list[str] = []
     cancelled = False
+    stopped, refused = None, 0
     try:
         try:
             for group in batches(todo):
@@ -215,6 +280,7 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
                 emit("progress", phase="importing", done=done, total=total)
                 if paths:
                     result = lib.import_photos(paths, skip_duplicate_check=True)
+                    refused = 0 if result else refused + len(group)
                     for item in result:
                         p = by_name.get((item.filename or "").lower())
                         imported_count += 1
@@ -230,13 +296,16 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
                 shutil.rmtree(folder, ignore_errors=True)
                 done += len(group)
                 emit("progress", phase="importing", done=done, total=total)
+                if refused >= STOP_AFTER:
+                    stopped = stop_reason(dst, refused)
+                    break
         except KeyboardInterrupt:  # Cancel: report what did get imported
             cancelled = True
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
     summary = {"imported": imported_count, "requested": total, "failed": failed,
-               "imported_uuids": imported_uuids, "cancelled": cancelled,
+               "imported_uuids": imported_uuids, "cancelled": cancelled, "stopped": stopped,
                "skipped_edited": [{"uuid": p.uuid, "name": p.original_filename}
                                   for p in skipped]}
     emit("done", **summary)
@@ -325,7 +394,7 @@ def parts(p) -> tuple[list[dict], str | None]:
     return [{**x, "path": str(x["path"])} for x in r], None
 
 
-def manifest(src: Path, uuids: list[str]) -> dict:
+def manifest(src: Path, uuids: list[str], dst: Path | None = None) -> dict:
     """What the Mac app needs to create each photo (PhotoKit), plus what it can't import."""
     wanted = set(uuids)
     items, problems = [], []
@@ -341,6 +410,8 @@ def manifest(src: Path, uuids: list[str]) -> dict:
                       "date": p.date.timestamp(), "lat": lat, "lon": lon,
                       "favorite": bool(p.favorite), "hidden": bool(p.hidden),
                       "albums": [a for a in p.albums if a], "resources": files})
+    if dst is not None:
+        check_space(dst, [r["path"] for i in items for r in i["resources"]])
     return {"items": items, "problems": problems}
 
 
@@ -425,7 +496,9 @@ def finish(src: Path, dst: Path, run: dict, emit=lambda *a, **k: None) -> dict:
     imported = [s for s, d in created.items() if d in made]
     summary = {"imported": len(imported), "requested": run.get("requested", len(created)),
                "failed": failed, "imported_uuids": imported,
-               "cancelled": bool(run.get("cancelled")), "skipped_edited": []}
+               "cancelled": bool(run.get("cancelled")), "stopped": run.get("stopped")
+               or (stop_reason(dst, run["refused"]) if run.get("refused") else None),
+               "skipped_edited": []}
     emit("done", **summary)
     return summary
 
@@ -501,7 +574,9 @@ def main(argv: list[str] | None = None) -> None:
     uuids = [u.strip() for u in args.uuids_file.read_text().splitlines() if u.strip()]
     if args.parts:
         try:
-            print(json.dumps(manifest(src, uuids)), flush=True)
+            print(json.dumps(manifest(src, uuids, dst)), flush=True)
+        except NotEnoughSpace as e:
+            fail(str(e))
         except Exception as e:  # noqa: BLE001
             fail(f"couldn’t read “{src.stem}”: {e}")
         return

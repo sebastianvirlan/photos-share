@@ -37,6 +37,7 @@ struct ImportSummary: Codable {
     let skipped_edited: [Named]
     var imported_uuids: [String]? = nil
     var cancelled: Bool? = nil
+    var stopped: String? = nil
 }
 
 enum EditedMode: String, CaseIterable, Identifiable {
@@ -96,6 +97,10 @@ final class ImportModel {
     private(set) var isImporting = false
     private var process: Process?
     private var cancelled = false
+    /// Imports cut short before they were checked (see `PhotoKitImport.Journal`).
+    private(set) var interrupted: [PhotoKitImport.Journal] = PhotoKitImport.Journal.all()
+    /// The journal being finished now: removed once photos-import reports it's done.
+    private var finishing: PhotoKitImport.Journal?
 
     /// Edits can be kept only when the destination is the System Photo Library (PhotoKit).
     var keepsEdits: Bool { plan?.dest_is_system == true }
@@ -226,6 +231,8 @@ final class ImportModel {
         importError = error
         isImporting = false
         process = nil
+        finishing = nil   // its journal stays, to finish later
+        interrupted = PhotoKitImport.Journal.all()
         // Without a result we can't tell what arrived: offer only what's still not in the destination.
         let inDest = Set((plan?.items ?? []).filter(\.in_dest).map(\.uuid))
         notImported = lastRequested.subtracting(inDest)
@@ -287,36 +294,69 @@ final class ImportModel {
             let manifest = try JSONDecoder().decode(PhotoKitImport.Manifest.self, from: out)
             try await PhotoKitImport.authorize()
 
-            var run = PhotoKitImport.Run(requested: uuids.count, failed: manifest.problems)
+            var journal = PhotoKitImport.Journal(
+                source: source.path, dest: dest.path, started: Date(),
+                run: PhotoKitImport.Run(requested: uuids.count, failed: manifest.problems))
             let albums = try await PhotoKitImport.albums(named: Set(manifest.items.flatMap(\.albums)))
             phase = "Importing"
             done = manifest.problems.count
+            var refused = 0
             var rest = manifest.items[...]
             while !rest.isEmpty && !cancelled {
                 let batch = Array(rest.prefix(PhotoKitImport.batchSize))
                 rest = rest.dropFirst(batch.count)
-                await PhotoKitImport.create(batch, albums: albums, into: &run)
+                let before = journal.run.created.count
+                await PhotoKitImport.create(batch, albums: albums, into: &journal.run)
                 done += batch.count
+                refused = journal.run.created.count > before ? 0 : refused + batch.count
+                try? journal.save()   // if the app stops now, the next launch can finish this
+                if refused >= PhotoKitImport.stopAfter && !rest.isEmpty {
+                    journal.run.refused = refused
+                    break
+                }
             }
-            if cancelled {
-                run.requested = run.created.count + run.failed.count
-                run.cancelled = true
+            if cancelled || journal.run.refused != nil {
+                journal.run.requested = journal.run.created.count + journal.run.failed.count
+                journal.run.cancelled = cancelled
             }
-
-            let runFile = FileManager.default.temporaryDirectory
-                .appendingPathComponent("photos-import-run-\(UUID().uuidString).json")
-            try JSONEncoder().encode(run).write(to: runFile)
-            phase = "Checking"
-            process = try Tools.stream(
-                "photos-import", [source.path, dest.path, "--finish", runFile.path, "--json"],
-                onLine: { [weak self] line in self?.handle(line) },
-                onExit: { [weak self] code, stderr in
-                    try? FileManager.default.removeItem(at: runFile)
-                    self?.finished(code, stderr)
-                })
+            try journal.save()
+            finishRun(journal)
         } catch {
             stopImporting(error.localizedDescription)
         }
+    }
+
+    /// Checks what a run created and adds titles, captions and keywords (photos-import --finish).
+    private func finishRun(_ journal: PhotoKitImport.Journal) {
+        finishing = journal
+        phase = "Checking"
+        do {
+            process = try Tools.stream(
+                "photos-import", [journal.source, journal.dest, "--finish", journal.file.path, "--json"],
+                onLine: { [weak self] line in self?.handle(line) },
+                onExit: { [weak self] code, stderr in self?.finished(code, stderr) })
+        } catch {
+            stopImporting("Couldn’t run photos-import: \(error.localizedDescription)")
+        }
+    }
+
+    /// Finishes an import that was cut short: checks its photos and copies their details.
+    func finishInterrupted(_ journal: PhotoKitImport.Journal) {
+        guard !isImporting else { return }
+        lastRequested = Set(journal.run.created.map(\.source_uuid))
+        notImported = []
+        cancelled = false
+        isImporting = true
+        importError = nil
+        summary = nil
+        done = 0
+        total = journal.run.created.count
+        finishRun(journal)
+    }
+
+    func discardInterrupted(_ journal: PhotoKitImport.Journal) {
+        journal.remove()
+        interrupted = PhotoKitImport.Journal.all()
     }
 
     func cancel() {
@@ -345,6 +385,9 @@ final class ImportModel {
                 summary = result
                 apply(result)
             }
+            finishing?.remove()
+            finishing = nil
+            interrupted = PhotoKitImport.Journal.all()
             isImporting = false
         case "error":
             stopImporting(obj["message"] as? String ?? "Import failed.")
@@ -361,6 +404,9 @@ final class ImportModel {
                           ?? "photos-import stopped unexpectedly (code \(code)).")
         }
     }
+
+    /// For `--snapshot` renders only.
+    func showInterruptedForSnapshot(_ j: [PhotoKitImport.Journal]) { interrupted = j }
 
     /// For `--snapshot` renders only.
     func showProgressForSnapshot(done: Int, total: Int) {

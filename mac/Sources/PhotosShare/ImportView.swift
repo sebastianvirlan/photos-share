@@ -17,6 +17,7 @@ struct ImportView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            interruptedStrip
             content
         }
         .frame(minWidth: 820, minHeight: 600)
@@ -258,6 +259,31 @@ struct ImportView: View {
     }
 
     /// The last import's outcome, above the bottom bar; details in a popover.
+    /// An import cut short (app quit or crashed) before its photos were checked.
+    @ViewBuilder private var interruptedStrip: some View {
+        if !model.isImporting, let j = model.interrupted.first {
+            let n = j.run.created.count
+            HStack(spacing: 12) {
+                Label("An import into “\(j.destName)” on \(j.started.formatted(date: .abbreviated, time: .shortened)) didn’t finish. "
+                      + (n == 0 ? "No photos were created."
+                         : "\(n) \(n == 1 ? "photo was" : "photos were") created, but not checked, and \(n == 1 ? "its" : "their") titles, captions and keywords weren’t copied."),
+                      systemImage: "clock.arrow.circlepath")
+                    .foregroundStyle(.orange).lineLimit(3)
+                Spacer()
+                if n > 0 {
+                    Button("Finish It") { model.finishInterrupted(j) }
+                        .help("Check the photos it created and copy their titles, captions and keywords.")
+                }
+                Button(n > 0 ? "Discard" : "Dismiss") { model.discardInterrupted(j) }
+                    .help(n > 0 ? "Forget it: the photos stay, without their titles, captions and keywords." : "")
+            }
+            .font(.callout)
+            .padding(.horizontal, 24).padding(.vertical, 10)
+            .background(.orange.opacity(0.08))
+            Divider()
+        }
+    }
+
     @ViewBuilder private var resultStrip: some View {
         if !model.isImporting, model.summary != nil || model.importError != nil {
             let s = model.summary
@@ -266,6 +292,10 @@ struct ImportView: View {
                 if let error = model.importError {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange).lineLimit(2).textSelection(.enabled)
+                } else if let s, let stopped = s.stopped {
+                    Label("Stopped after importing \(s.imported) of \(s.requested): \(stopped)",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange).lineLimit(3).textSelection(.enabled)
                 } else if let s {
                     Label("\(s.cancelled == true ? "Cancelled: imported" : "Imported") \(s.imported) of \(s.requested) into “\(model.plan?.dest_name ?? "")”"
                           + (problems > 0 ? " · \(problems) to look at" : ""),

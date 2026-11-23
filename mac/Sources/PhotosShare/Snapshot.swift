@@ -50,6 +50,22 @@ enum Snapshot {
             failed: [.init(uuid: "x", name: "IMG_0042.HEIC", reason: "Photos refused it: unsupported file")],
             skipped_edited: [], imported_uuids: Array(newOnes.prefix(10))), requested: Set(newOnes.prefix(12)))
         render(ImportView(model: after).frame(width: 960, height: 640), to: dir, name: "import-result")
+        // Stopped because the disk filled up, with an earlier import left unfinished.
+        let stopped = ImportModel()
+        stopped.showForSnapshot(system, source: URL(fileURLWithPath: "/Volumes/HDD/iPhone 13 Backup.photoslibrary"),
+                                dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
+        var cut = PhotoKitImport.Run(requested: 40)
+        cut.created = newOnes.prefix(7).map { .init(source_uuid: $0, created: "X/L0/001") }
+        stopped.showInterruptedForSnapshot([PhotoKitImport.Journal(
+            source: "/Volumes/HDD/iPhone 13 Backup.photoslibrary", dest: "/Volumes/HDD/Trips.photoslibrary",
+            started: Date(timeIntervalSince1970: 1_763_900_000), run: cut)])
+        stopped.showResultForSnapshot(ImportSummary(
+            imported: 20, requested: 25,
+            failed: (1...5).map { .init(uuid: "f\($0)", name: "IMG_00\($0).HEIC", reason: "Photos refused it") },
+            skipped_edited: [], imported_uuids: Array(newOnes.prefix(5)),
+            stopped: "“HDD” is full (0.2 GB free), so Photos refused the last 5 photos. Free up space, then select the ones not imported and try again."),
+            requested: Set(newOnes))
+        render(ImportView(model: stopped).frame(width: 960, height: 640), to: dir, name: "import-stopped")
         render(PhotoPreview(model: keeping, uuid: system.items[0].uuid).frame(width: 1000, height: 700),
                to: dir, name: "import-preview")
         // A video in the preview (this crashed once inside SwiftUI's VideoPlayer).
