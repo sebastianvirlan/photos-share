@@ -77,6 +77,11 @@ enum Snapshot {
             }
         }.padding(20).frame(width: 700), to: dir, name: "duplicates-tiles")
 
+        let badged = ImportItem(uuid: "B", name: "IMG_1.HEIC", date: "2025-01-01T10:00:00", thumb: nil, movie: false,
+                                live: true, favorite: true, edited: true, hidden: true, albums: [], in_dest: true)
+        render(HStack { ImportTile(item: badged, selected: true, destName: "Trips").frame(width: 160) }
+               .padding(10).background(Color.gray), to: dir, name: "badges")
+
         // ShareView is an AppKit-backed grouped Form, which ImageRenderer can't draw.
         exit(0)
     }

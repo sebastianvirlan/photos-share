@@ -398,14 +398,15 @@ struct ImportTile: View {
                     .shadow(radius: 1).padding(5)
             }
             .overlay(alignment: .bottomLeading) {
-                HStack(spacing: 4) {
-                    if item.movie { Image(systemName: "play.fill") }
-                    if item.live { Text("LIVE").font(.system(size: 8, weight: .bold)) }
-                    if item.favorite { Image(systemName: "heart.fill") }
-                    if item.edited { Image(systemName: "pencil.circle.fill") }
-                    if item.hidden { Image(systemName: "eye.slash.fill") }
+                HStack(spacing: 5) {
+                    if item.movie { Image(systemName: "play.fill").help("Video") }
+                    if item.live { Text("LIVE").font(.system(size: 9, weight: .bold)).help("Live Photo") }
+                    if item.favorite { Image(systemName: "heart.fill").help("Favourite") }
+                    if item.edited { Image(systemName: "pencil").help("Edited in Photos") }
+                    if item.hidden { Image(systemName: "eye.slash.fill").help("Hidden") }
                 }
-                .font(.system(size: 10)).foregroundStyle(.white).shadow(radius: 1.5).padding(5)
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.6), radius: 2).padding(6)
             }
             .overlay(alignment: .bottomTrailing) {
                 if item.in_dest {
