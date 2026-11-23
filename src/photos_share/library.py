@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CACHE_ROOT = Path.home() / "Library" / "Caches" / "photos-share"
-INDEX_VERSION = 4
+INDEX_VERSION = 5  # 5: albums gathered from each photo
 log = logging.getLogger("photos_share")
 
 # Opening a library reads a large DB from a spinning disk; do one at a time.
@@ -174,7 +174,9 @@ class Library:
             people.append({"name": pi.name, "face": _avatar(pi)})
 
         assets = []
+        album_members: dict[str, dict] = {}
         for p in db.photos():  # excludes Recently Deleted; hidden kept, filtered per share
+            _collect_albums(p, album_members)
             lat, lon = p.location if p.location else (None, None)
             persons = sorted({person_index[f.person_info.uuid] for f in p.face_info
                               if f.person_info and f.person_info.uuid in person_index})
@@ -196,10 +198,7 @@ class Library:
                 "live": rel(p.path_live_photo) if p.live_photo else None,
                 "filename": p.original_filename,
             })
-        albums = [
-            {"title": a.title, "uuids": [p.uuid for p in a.photos]}
-            for a in db.album_info if a.title
-        ]
+        albums = albums_from(album_members, {a["uuid"]: a["date"] for a in assets})
         data = {"version": INDEX_VERSION, "fingerprint": fingerprint,
                 "assets": assets, "albums": albums, "people": people}
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -228,7 +227,7 @@ class Library:
         for al in data["albums"]:
             uuids = [u for u in al["uuids"] if u in by_uuid]
             if uuids:
-                albums.append({"title": al["title"], "uuids": uuids})
+                albums.append({"title": al["title"], "uuids": uuids, "folder": al.get("folder", "")})
         # Keep every person (indexes in assets refer to this list); the UI hides people
         # with no visible photos, and avatars on hidden photos are dropped here.
         people = [dict(p, face=p["face"] if p["face"] and p["face"]["u"] in by_uuid else None)
@@ -282,6 +281,34 @@ class Library:
                         index.setdefault(n.split("_", 1)[0], []).append(d / n)
             self._derivs = index
         return index
+
+
+def _collect_albums(p, into: dict[str, dict]) -> None:
+    """Note which albums photo `p` is in. Albums are gathered photo by photo: asking the
+    library for its album list came back empty for some libraries (newer Photos versions),
+    while each photo still knows its albums (the Import window reads them the same way)."""
+    try:
+        infos = p.album_info
+    except Exception:  # noqa: BLE001 - one odd photo shouldn't lose every album
+        return
+    for a in infos or []:
+        if not a.title:
+            continue
+        entry = into.setdefault(a.uuid, {"title": a.title, "uuids": []})
+        try:
+            entry["folder"] = " / ".join(a.folder_names or [])
+        except Exception:  # noqa: BLE001
+            entry.setdefault("folder", "")
+        entry["uuids"].append(p.uuid)
+
+
+def albums_from(members: dict[str, dict], dates: dict[str, str]) -> list[dict]:
+    """Albums sorted by folder then title, each album's photos oldest first (as in Photos)."""
+    out = []
+    for entry in members.values():
+        uuids = sorted(set(entry["uuids"]), key=lambda u: dates.get(u, ""))
+        out.append({"title": entry["title"], "folder": entry.get("folder", ""), "uuids": uuids})
+    return sorted(out, key=lambda a: (a["folder"].lower(), a["title"].lower()))
 
 
 def _avatar(person) -> dict | None:

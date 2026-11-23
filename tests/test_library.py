@@ -202,3 +202,34 @@ def test_hidden_excluded_by_default_and_included_on_request(libs_dir):
     lib = Library(libs_dir / "Fake.photoslibrary", Options(show_hidden=True))
     lib.load_cached()
     assert lib.by_uuid["HD"].is_hidden and lib.assets[-1].uuid == "HD"
+
+
+def test_albums_gathered_from_each_photo():
+    import types
+    from photos_share.library import _collect_albums, albums_from
+
+    def album(uuid, title, folders=()):
+        return types.SimpleNamespace(uuid=uuid, title=title, folder_names=list(folders))
+
+    trip = album("a1", "Trip", ["2024", "Summer"])
+    best = album("a2", "Best")
+    photos = [types.SimpleNamespace(uuid="P2", album_info=[trip, best]),
+              types.SimpleNamespace(uuid="P1", album_info=[trip, album("a3", None)]),
+              types.SimpleNamespace(uuid="P3", album_info=[])]
+
+    class Broken:
+        uuid = "PX"
+
+        @property
+        def album_info(self):
+            raise RuntimeError("odd photo")
+    photos.append(Broken())
+
+    members = {}
+    for p in photos:
+        _collect_albums(p, members)
+    dates = {"P1": "2024-01-01", "P2": "2024-02-01"}
+    assert albums_from(members, dates) == [
+        {"title": "Best", "folder": "", "uuids": ["P2"]},
+        {"title": "Trip", "folder": "2024 / Summer", "uuids": ["P1", "P2"]},   # oldest first
+    ]
