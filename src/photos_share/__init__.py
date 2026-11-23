@@ -5,7 +5,12 @@ import logging
 import os
 import signal
 import sys
+import warnings
 from pathlib import Path
+
+# urllib3 (pulled in by osxphotos) warns about optional SOCKS proxy support on import;
+# nothing here uses a proxy, so it's only noise in the terminal.
+warnings.filterwarnings("ignore", message="SOCKS support in urllib3")
 
 PASSWORD_ENV = "PHOTOS_SHARE_PASSWORD"
 
