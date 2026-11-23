@@ -254,7 +254,9 @@ function renderScope(base) {
 }
 
 function sidebar() {
-  const item = (href, label, count, active) => h("a", { class: "nav" + (active ? " active" : ""), href },
+  const item = (href, label, count, active, cover) => h("a", { class: "nav" + (active ? " active" : ""), href },
+    cover ? h("img", { class: "nav-thumb", src: `/thumb/${lib.id}/${cover}?size=small`, loading: "lazy",
+                       decoding: "async", alt: "" }) : null,
     h("span", {}, label), count != null ? h("span", { class: "count" }, n(count)) : null);
   const media = Object.entries(MEDIA).filter(([k]) => k !== "favorites")
     .map(([k, [label, pred]]) => [k, label, lib.assets.filter(pred).length]).filter(m => m[2]);
@@ -275,7 +277,8 @@ function sidebar() {
     media.length ? h("div", { class: "section" }, "Media Types") : null,
     media.map(([k, label, c]) => item(baseHash(["m", k]), label, c, scope.media === k)),
     lib.albums.length ? h("div", { class: "section" }, "Albums") : null,
-    lib.albums.map((al, i) => item(baseHash(["a", i]), al.title, al.uuids.length, scope.album === i)));
+    lib.albums.map((al, i) => item(baseHash(["a", i]), al.title, al.uuids.length, scope.album === i,
+      al.cover)));
 }
 
 // ---------------------------------------------------------------- people

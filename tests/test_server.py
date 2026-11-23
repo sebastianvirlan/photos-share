@@ -30,7 +30,7 @@ def test_library_payload(client, fake_id):
     assert data["people"][0] == {"name": "Ana", "face": {"u": "P1", "x": 0.5, "y": 0.4, "s": 0.2},
                                  "count": 1}
     assert data["people"][1]["count"] == 0  # only appears on a hidden screenshot
-    assert data["albums"] == [{"title": "Trip", "uuids": ["P1"]}]
+    assert data["albums"] == [{"title": "Trip", "uuids": ["P1"], "cover": "P1"}]
     assert data["downloads"] is False and data["rev"] == 1
 
 
@@ -225,3 +225,24 @@ def test_library_cover_skips_items_without_files(make_client, fake_id):
     lib.assets[0] = replace(first, original=None, edited=None)
     cover = next(l for l in client.get("/api/libraries").json() if l["id"] == fake_id)["cover"]
     assert cover == lib.assets[1].uuid
+
+
+def test_album_cover_is_newest_photo_with_a_file(make_client, fake_id):
+    from dataclasses import replace
+    from photos_share.server import _album_cover
+    client, col = make_client()
+    client.get(f"/api/libraries/{fake_id}")
+    lib = col.get(fake_id)
+    al = {"title": "X", "uuids": ["P2", "P1"]}           # oldest first
+    assert _album_cover(lib, al) == "P1"
+    lib.by_uuid["P1"] = replace(lib.by_uuid["P1"], original=None, edited=None)
+    assert _album_cover(lib, al) == "P2"                 # skips the one with no file
+
+
+def test_small_thumbnail_is_photos_own_preview(make_client, fake_id, libs_dir):
+    _add_preview(libs_dir, "P1", "_1_102_o.jpeg")
+    client, _ = make_client()
+    r = client.get(f"/thumb/{fake_id}/P1?size=small")
+    assert r.status_code == 200 and r.headers["cache-control"].startswith("private, max-age")
+    preview = libs_dir / "Fake.photoslibrary/resources/derivatives/masters/P/P1_1_102_o.jpeg"
+    assert r.content == preview.read_bytes()

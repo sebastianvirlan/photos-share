@@ -125,13 +125,18 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
             "id": lib.id, "name": lib.name, "state": "ready", "rev": lib.rev,
             "available": lib.available, "downloads": downloads,
             "assets": [_asset_json(a) for a in lib.assets],
-            "albums": [{"title": al["title"], "uuids": al["uuids"]} for al in lib.albums],
+            "albums": [{"title": al["title"], "uuids": al["uuids"], "cover": _album_cover(lib, al)}
+                       for al in lib.albums],
             "people": _people_json(lib),
         }
 
     @app.get("/thumb/{lib_id}/{uuid}")
-    def thumb(lib_id: str, uuid: str):
+    def thumb(lib_id: str, uuid: str, size: str = ""):
         lib, asset = lookup(lib_id, uuid)
+        if size == "small":   # sidebar icons: Photos' own smallest preview is plenty
+            previews = lib.derivatives(asset.uuid)
+            if previews:
+                return FileResponse(previews[-1], media_type="image/jpeg", headers=IMG_CACHE)
         path, final = media.thumbnail_now(lib, asset)
         if path is None:
             _missing("Thumbnail", asset, asset.original)
@@ -210,6 +215,15 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
         return FileResponse(path, filename=name)
 
     return app
+
+
+def _album_cover(lib: Library, album: dict) -> str | None:
+    """The album's newest photo that has a file (albums list oldest first)."""
+    for uuid in reversed(album["uuids"]):
+        a = lib.by_uuid.get(uuid)
+        if a and (a.original or a.edited):
+            return uuid
+    return album["uuids"][-1] if album["uuids"] else None
 
 
 def _asset_json(a: Asset) -> dict:

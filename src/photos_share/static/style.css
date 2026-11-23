@@ -105,7 +105,9 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .section { padding: 14px 8px 4px; color: var(--muted); font-size: 11px; font-weight: 600;
   text-transform: uppercase; letter-spacing: .04em; }
 .nav { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 7px; }
-.nav span:first-child { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav span:first-of-type { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-thumb { width: 30px; height: 30px; flex: none; border-radius: 5px; object-fit: cover;
+  background: var(--tile); margin: -2px 0; }
 .nav .count { color: var(--muted); font-size: 12px; }
 .nav:hover { background: var(--line); }
 .nav.active { background: var(--accent); color: #fff; }
