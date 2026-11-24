@@ -105,6 +105,13 @@ final class ImportModel {
     }
     /// The photos in the import that's running: shown as importing, and can't be selected.
     private(set) var importing: Set<String> = []
+    /// Photos added while an import runs: imported together as soon as it finishes well.
+    /// If it stops on a problem or is cancelled, they wait for Start Queue.
+    private(set) var queued: Set<String> = []
+    /// Importing or queued: shown with their state, and not selectable.
+    var locked: Set<String> { importing.union(queued) }
+    /// Libraries can't change while photos are on their way or waiting.
+    var busy: Bool { isImporting || !queued.isEmpty }
     private var process: Process?
     private var cancelled = false
     /// Imports cut short before they were checked (see `PhotoKitImport.Journal`).
@@ -123,7 +130,7 @@ final class ImportModel {
     var canLoad: Bool {
         guard let source, let dest, source != dest else { return false }
         if case .loading = state { return false }
-        return !isImporting
+        return !busy
     }
 
     var visible: [ImportItem] {
@@ -174,6 +181,10 @@ final class ImportModel {
 
     func toggle(_ item: ImportItem) {
         guard !importing.contains(item.uuid) else { return }
+        if queued.contains(item.uuid) {   // clicking a queued photo takes it out of the queue
+            queued.remove(item.uuid)
+            return
+        }
         if selection.contains(item.uuid) { selection.remove(item.uuid) } else { selection.insert(item.uuid) }
         anchor = item.uuid
     }
@@ -189,7 +200,7 @@ final class ImportModel {
             return
         }
         let range = shown[min(from, to)...max(from, to)].map(\.uuid)
-        if selection.contains(anchor) { selection.formUnion(Set(range).subtracting(importing)) }
+        if selection.contains(anchor) { selection.formUnion(Set(range).subtracting(locked)) }
         else { selection.subtract(range) }
     }
 
@@ -198,18 +209,47 @@ final class ImportModel {
     /// Selection while dragging a box: `base` is the selection when the drag started.
     func marquee(base: Set<String>, touched: Set<String>, mode: MarqueeMode) {
         switch mode {
-        case .replace: selection = touched.subtracting(importing)
-        case .add: selection = base.union(touched.subtracting(importing))
+        case .replace: selection = touched.subtracting(locked)
+        case .add: selection = base.union(touched.subtracting(locked))
         case .remove: selection = base.subtracting(touched)
         }
     }
-    func selectVisible() { selection.formUnion(Set(visible.map(\.uuid)).subtracting(importing)) }
+    func selectVisible() { selection.formUnion(Set(visible.map(\.uuid)).subtracting(locked)) }
     func deselectVisible() { selection.subtract(visible.map(\.uuid)) }
 
     func start() {
-        guard source != nil, dest != nil, !selection.isEmpty, !isImporting else { return }
+        guard !selection.isEmpty, !isImporting else { return }
         let uuids = selection
         selection.subtract(uuids)   // they're on their way; select more meanwhile
+        begin(uuids)
+    }
+
+    /// While importing: the selection waits, and is imported when this import finishes.
+    func enqueue() {
+        guard isImporting else { return start() }
+        let add = selection.subtracting(importing)
+        queued.formUnion(add)
+        selection.subtract(add)
+        ImportLog.write("  queued \(add.count) more (\(queued.count) waiting)")
+    }
+
+    func clearQueue() {
+        ImportLog.write("  queue cleared (\(queued.count) photos)")
+        queued = []
+    }
+
+    /// Imports what's queued (also automatically, when an import finishes well).
+    func startQueue() {
+        guard !isImporting else { return }
+        let inDest = Set((plan?.items ?? []).filter(\.in_dest).map(\.uuid))
+        let next = queued.subtracting(inDest)
+        queued = []
+        guard !next.isEmpty else { return }
+        begin(next)
+    }
+
+    private func begin(_ uuids: Set<String>) {
+        guard source != nil, dest != nil, !uuids.isEmpty, !isImporting else { return }
         lastRequested = uuids
         notImported = []
         cancelled = false
@@ -257,7 +297,7 @@ final class ImportModel {
     }
 
     func selectNotImported() {
-        selection.formUnion(notImported.subtracting(importing))
+        selection.formUnion(notImported.subtracting(locked))
         notImported = []
     }
 
@@ -419,6 +459,11 @@ final class ImportModel {
             finishing = nil
             interrupted = PhotoKitImport.Journal.all()
             isImporting = false
+            // The queue goes next, unless this import stopped on a problem.
+            if !queued.isEmpty, summary?.stopped == nil, summary?.cancelled != true {
+                ImportLog.write("  starting the queue: \(queued.count) photos")
+                startQueue()
+            }
         case "error":
             stopImporting(obj["message"] as? String ?? "Import failed.")
         case "cancelled":
@@ -436,6 +481,10 @@ final class ImportModel {
     }
 
     /// For `--snapshot` renders only.
+    func showQueueForSnapshot(_ n: Int) {
+        queued = Set((plan?.items ?? []).filter { !$0.in_dest && !importing.contains($0.uuid) }.prefix(n).map(\.uuid))
+        selection.subtract(queued)
+    }
     func showInterruptedForSnapshot(_ j: [PhotoKitImport.Journal]) { interrupted = j }
 
     /// For `--snapshot` renders only.

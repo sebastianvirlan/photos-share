@@ -95,9 +95,12 @@ struct MainView: View {
             }
         case .importer:
             if importer.isImporting {
-                return .init(text: importer.total > 0 ? "Importing \(importer.done) of \(importer.total)" : "Importing…",
-                             busy: true)
+                let n = importer.total > 0 ? "\(importer.done) of \(importer.total)" : ""
+                let text = importer.queued.isEmpty ? (n.isEmpty ? "Importing…" : "Importing \(n)")
+                    : (n.isEmpty ? "Importing" : n) + " · \(importer.queued.count) queued"
+                return .init(text: text, busy: true)
             }
+            if !importer.queued.isEmpty { return .init(text: "\(importer.queued.count) queued, not started", busy: false, tint: .orange) }
             if !importer.interrupted.isEmpty { return .init(text: "An import didn’t finish", busy: false, tint: .orange) }
             return nil
         case .cleanup:

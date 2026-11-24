@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         var running: [String] = []
         if ImportModel.shared.isImporting { running.append("an import (photos already created stay; the rest can be finished later)") }
+        if !ImportModel.shared.queued.isEmpty { running.append("the \(ImportModel.shared.queued.count) queued photos (they won’t be imported)") }
         if case .acting = CleanupModel.shared.state { running.append("a clean-up") }
         if DuplicatesModel.shared.state == .working { running.append("merging duplicates") }
         if ShareModel.shared.isActive { running.append("sharing (the link stops working)") }
@@ -83,6 +84,7 @@ enum WindowSnapshot {
         ImportModel.shared.showForSnapshot(plan, source: URL(fileURLWithPath: "/Volumes/HDD/iPhone 13 Backup.photoslibrary"),
                                            dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
         ImportModel.shared.showProgressForSnapshot(done: 3, total: 8)
+        ImportModel.shared.showQueueForSnapshot(5)
         for tool in Tool.allCases {
             AppNavigation.shared.tool = tool
             try? await Task.sleep(for: .seconds(1))

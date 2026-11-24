@@ -45,6 +45,7 @@ struct ImportView: View {
                 Image(systemName: "arrow.right").font(.title2.weight(.semibold)).foregroundStyle(.secondary)
                 LibraryPicker(title: "Into", url: $model.dest, compact: compact)
             }
+            .disabled(model.busy)
             HStack(spacing: 14) {
                 Button {
                     Task { await model.load() }
@@ -153,6 +154,7 @@ struct ImportView: View {
                         ForEach(items) { item in
                             ImportTile(item: item, selected: model.selection.contains(item.uuid),
                                        importing: model.importing.contains(item.uuid),
+                                       queued: model.queued.contains(item.uuid),
                                        destName: model.plan?.dest_name ?? "",
                                        maxPixels: ZoomControl.pixels(for: tileSize))
                                 .background(GeometryReader { g in
@@ -222,9 +224,24 @@ struct ImportView: View {
                     ProgressView(value: Double(model.done), total: Double(max(model.total, 1)))
                         .frame(maxWidth: 360)
                 }
-                Text("You can keep browsing and selecting meanwhile.")
-                    .font(.caption).foregroundStyle(.secondary)
+                if model.queued.isEmpty {
+                    Text("Select more to queue them; they’re imported next.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Label("\(model.queued.count) queued, next", systemImage: "clock")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Button("Clear Queue") { model.clearQueue() }
+                }
                 Spacer()
+                if !model.selection.isEmpty {
+                    Button {
+                        model.enqueue()
+                    } label: {
+                        Label("Add \(model.selection.count) to Queue", systemImage: "text.badge.plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .help("Imported as soon as this import finishes.")
+                }
                 Button("Cancel", role: .cancel) { model.cancel() }
                     .help("Stops after the current batch. Photos already added stay in “\(model.plan?.dest_name ?? "")”.")
             }
@@ -239,6 +256,14 @@ struct ImportView: View {
                 Button("Select All") { model.selectVisible() }
                 Button("Select None") { model.deselectVisible() }
                 Spacer()
+                if !model.queued.isEmpty {
+                    // Left waiting because the last import stopped or was cancelled.
+                    Label("\(model.queued.count) queued, not started", systemImage: "clock")
+                        .foregroundStyle(.orange)
+                    Button("Clear Queue") { model.clearQueue() }
+                    Button("Start Queue") { model.startQueue() }
+                        .help("Import the queued photos now.")
+                }
                 if model.selectedEdited > 0 && !model.keepsEdits {
                     Picker("\(model.selectedEdited) edited:", selection: $model.editedMode) {
                         ForEach(EditedMode.allCases) { Text($0.title).tag($0) }
@@ -421,6 +446,7 @@ struct ImportTile: View {
     let item: ImportItem
     let selected: Bool
     var importing = false
+    var queued = false
     let destName: String
     var maxPixels = 320
 
@@ -430,7 +456,17 @@ struct ImportTile: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .opacity(item.in_dest ? 0.45 : 1)
             .overlay {
-                if importing {
+                if queued {
+                    // Waiting for the running import: click to take it out of the queue.
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8).fill(.black.opacity(0.3))
+                        VStack(spacing: 5) {
+                            Image(systemName: "clock.fill").font(.system(size: 16))
+                            Text("Queued").font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundStyle(.white).shadow(color: .black.opacity(0.5), radius: 2)
+                    }
+                } else if importing {
                     // On its way: dimmed, with a spinner, and no checkbox (it can't be picked again).
                     ZStack {
                         RoundedRectangle(cornerRadius: 8).fill(.black.opacity(0.45))
@@ -443,7 +479,7 @@ struct ImportTile: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if !importing {
+                if !importing && !queued {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 18))
                     .foregroundStyle(selected ? Color.white : Color.white.opacity(0.9),
@@ -471,6 +507,8 @@ struct ImportTile: View {
             }
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selected && !importing ? Color.accentColor : .clear, lineWidth: 3))
             .contentShape(Rectangle())
-            .help(importing ? "\(item.name ?? item.uuid) is being imported" : item.name ?? item.uuid)
+            .help(importing ? "\(item.name ?? item.uuid) is being imported"
+                  : queued ? "\(item.name ?? item.uuid) is queued. Click to take it out of the queue."
+                  : item.name ?? item.uuid)
     }
 }
