@@ -297,10 +297,16 @@ struct ImportView: View {
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange).lineLimit(3).textSelection(.enabled)
                 } else if let s {
-                    Label("\(s.cancelled == true ? "Cancelled: imported" : "Imported") \(s.imported) of \(s.requested) into “\(model.plan?.dest_name ?? "")”"
-                          + (problems > 0 ? " · \(problems) to look at" : ""),
-                          systemImage: problems > 0 ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                        .foregroundStyle(problems > 0 ? .orange : .green)
+                    // Green only when everything asked for arrived, without problems.
+                    let all = problems == 0 && s.imported >= s.requested && s.cancelled != true
+                    let none = s.imported == 0 && s.requested > 0
+                    let dest = "“\(model.plan?.dest_name ?? "")”"
+                    Label((none ? "Nothing was imported into \(dest)"
+                           : "\(s.cancelled == true ? "Cancelled: imported" : "Imported") \(s.imported) of \(s.requested) into \(dest)")
+                          + (problems > 0 ? " · \(problems) to look at"
+                             : all || s.cancelled == true ? "" : " · Photos gave no reason"),
+                          systemImage: all ? "checkmark.circle.fill" : none ? "xmark.octagon.fill" : "exclamationmark.circle.fill")
+                        .foregroundStyle(all ? .green : none ? .red : .orange)
                 }
                 Spacer()
                 if !model.notImported.isEmpty {

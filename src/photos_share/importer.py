@@ -176,6 +176,11 @@ def apply_details(imported, src, albums_cache: dict, lib) -> None:
         albums_cache[title].add([imported])
 
 
+NOT_IMPORTED = ("Photos didn’t import it and gave no reason (usually a full disk, or a file "
+                "Photos can’t read: try File → Import in Photos with it to see)")
+UNSURE = "Photos may not have imported it (what it imported couldn’t be matched back to this photo)"
+
+
 class NotEnoughSpace(Exception):
     pass
 
@@ -281,10 +286,12 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
                 if paths:
                     result = lib.import_photos(paths, skip_duplicate_check=True)
                     refused = 0 if result else refused + len(group)
+                    unmatched = 0
                     for item in result:
                         p = by_name.get((item.filename or "").lower())
                         imported_count += 1
                         if p is None:
+                            unmatched += 1
                             continue
                         if p.uuid not in imported_uuids:
                             imported_uuids.append(p.uuid)
@@ -293,6 +300,12 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
                         except Exception as e:  # noqa: BLE001
                             failed.append({"uuid": p.uuid, "name": p.original_filename,
                                            "reason": f"imported, but details weren’t set: {e}"})
+                    # Photos' import just leaves out what it refuses: say so for each one.
+                    tried = {p.uuid for p in by_name.values()}
+                    for p in group:
+                        if p.uuid in tried and p.uuid not in imported_uuids:
+                            failed.append({"uuid": p.uuid, "name": p.original_filename,
+                                           "reason": NOT_IMPORTED if not unmatched else UNSURE})
                 shutil.rmtree(folder, ignore_errors=True)
                 done += len(group)
                 emit("progress", phase="importing", done=done, total=total)

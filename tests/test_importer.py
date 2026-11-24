@@ -461,3 +461,29 @@ def test_finish_explains_a_stopped_run(monkeypatch, lib):
     out = importer.finish(lib, lib.with_name("D.photoslibrary"),
                           {"created": [{"source_uuid": "A1", "created": "D1/L0/001"}]})
     assert out["stopped"] is None
+
+
+def test_run_import_reports_photos_that_photos_silently_left_out(monkeypatch):
+    src_photos = [photo("A"), photo("B"), photo("C")]
+    monkeypatch.setattr(importer, "_photos", lambda p: src_photos)
+    monkeypatch.setattr(importer, "_wait_for_library", lambda p: None)
+    monkeypatch.setattr(importer, "check_space", lambda dst, paths: None)
+
+    def fake_export(p, folder, mode):
+        f = folder / p.original_filename
+        f.write_bytes(b"x")
+        return [f]
+    monkeypatch.setattr(importer, "export_photo", fake_export)
+
+    class Lib(FakeLibrary):
+        def open(self, path):
+            pass
+
+        def import_photos(self, paths, skip_duplicate_check=False):
+            return [Imported(Path(x).name) for x in paths if "IMG_A" in x]   # B and C refused
+
+    monkeypatch.setitem(sys.modules, "photoscript", types.SimpleNamespace(PhotosLibrary=Lib))
+    out = importer.run_import(Path("/s.photoslibrary"), Path("/d.photoslibrary"), ["A", "B", "C"])
+    assert out["imported_uuids"] == ["A"]
+    assert {f["uuid"]: f["reason"] for f in out["failed"]} == {"B": importer.NOT_IMPORTED,
+                                                               "C": importer.NOT_IMPORTED}
