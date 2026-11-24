@@ -298,8 +298,8 @@ struct ImportView: View {
                         .foregroundStyle(.orange).lineLimit(3).textSelection(.enabled)
                 } else if let s {
                     // Green only when everything asked for arrived, without problems.
-                    let all = problems == 0 && s.imported >= s.requested && s.cancelled != true
-                    let none = s.imported == 0 && s.requested > 0
+                    let all = problems == 0 && s.requested > 0 && s.imported >= s.requested && s.cancelled != true
+                    let none = s.imported == 0 && s.cancelled != true
                     let dest = "“\(model.plan?.dest_name ?? "")”"
                     Label((none ? "Nothing was imported into \(dest)"
                            : "\(s.cancelled == true ? "Cancelled: imported" : "Imported") \(s.imported) of \(s.requested) into \(dest)")

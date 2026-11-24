@@ -487,3 +487,20 @@ def test_run_import_reports_photos_that_photos_silently_left_out(monkeypatch):
     assert out["imported_uuids"] == ["A"]
     assert {f["uuid"]: f["reason"] for f in out["failed"]} == {"B": importer.NOT_IMPORTED,
                                                                "C": importer.NOT_IMPORTED}
+
+
+def test_run_import_reports_photos_it_cant_find(monkeypatch):
+    monkeypatch.setattr(importer, "_photos", lambda p: [photo("A")])
+    monkeypatch.setattr(importer, "check_space", lambda dst, paths: None)
+    monkeypatch.setitem(sys.modules, "photoscript", types.SimpleNamespace(PhotosLibrary=FakeLibrary))
+    out = importer.run_import(Path("/s.photoslibrary"), Path("/d.photoslibrary"), ["Z1", "Z2"])
+    assert out["requested"] == 2 and out["imported"] == 0
+    assert [f["uuid"] for f in out["failed"]] == ["Z1", "Z2"]
+    assert "not found in “s”" in out["failed"][0]["reason"]
+
+
+def test_manifest_reports_photos_it_cant_find(monkeypatch, lib):
+    monkeypatch.setattr(importer, "_photos", lambda p: [files_photo(lib, "A1")])
+    out = importer.manifest(lib, ["A1", "GONE"])
+    assert [i["source_uuid"] for i in out["items"]] == ["A1"]
+    assert [p["uuid"] for p in out["problems"]] == ["GONE"]

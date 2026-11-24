@@ -241,6 +241,7 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
 
     wanted = set(uuids)
     photos = [p for p in _photos(src) if p.uuid in wanted]
+    lost = sorted(wanted - {p.uuid for p in photos})
     skipped = [p for p in photos if has_real_edit(p) and edited_mode == "skip"]
     todo = [p for p in photos if p not in skipped]
     total = len(todo)
@@ -257,7 +258,9 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
         _wait_for_library(dst)
 
     staging = Path(tempfile.mkdtemp(prefix="photos-import-"))
-    done, failed, imported_count, albums_cache = 0, [], 0, {}
+    done, imported_count, albums_cache = 0, 0, {}
+    failed = [{"uuid": u, "name": None, "reason": f"not found in “{src.stem}” when importing "
+               "(deleted or changed since the list was read? Reload)"} for u in lost]
     imported_uuids: list[str] = []
     cancelled = False
     stopped, refused = None, 0
@@ -317,7 +320,7 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
-    summary = {"imported": imported_count, "requested": total, "failed": failed,
+    summary = {"imported": imported_count, "requested": total + len(lost), "failed": failed,
                "imported_uuids": imported_uuids, "cancelled": cancelled, "stopped": stopped,
                "skipped_edited": [{"uuid": p.uuid, "name": p.original_filename}
                                   for p in skipped]}
@@ -423,6 +426,10 @@ def manifest(src: Path, uuids: list[str], dst: Path | None = None) -> dict:
                       "date": p.date.timestamp(), "lat": lat, "lon": lon,
                       "favorite": bool(p.favorite), "hidden": bool(p.hidden),
                       "albums": [a for a in p.albums if a], "resources": files})
+    seen = {i["source_uuid"] for i in items} | {p["uuid"] for p in problems}
+    problems += [{"uuid": u, "name": None, "reason": f"not found in “{src.stem}” when importing "
+                  "(deleted or changed since the list was read? Reload)"}
+                 for u in sorted(wanted - seen)]
     if dst is not None:
         check_space(dst, [r["path"] for i in items for r in i["resources"]])
     return {"items": items, "problems": problems}
