@@ -271,6 +271,8 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
     wanted = set(uuids)
     photos = [p for p in _photos(src) if p.uuid in wanted]
     lost = sorted(wanted - {p.uuid for p in photos})
+    there = already_in(dst, photos)
+    photos, present = [p for p in photos if p.uuid not in there], [p for p in photos if p.uuid in there]
     skipped = [p for p in photos if has_real_edit(p) and edited_mode == "skip"]
     todo = [p for p in photos if p not in skipped]
     total = len(todo)
@@ -290,6 +292,7 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
     done, imported_count, albums_cache = 0, 0, {}
     failed = [{"uuid": u, "name": None, "reason": f"not found in “{src.stem}” when importing "
                "(deleted or changed since the list was read? Reload)"} for u in lost]
+    failed += [_already(p, dst) for p in present]
     imported_uuids: list[str] = []
     cancelled = False
     stopped, refused = None, 0
@@ -366,7 +369,8 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
-    summary = {"imported": imported_count, "requested": total + len(lost), "failed": failed,
+    summary = {"imported": imported_count, "requested": total + len(lost) + len(present),
+               "already_in_dest": [p.uuid for p in present], "failed": failed,
                "imported_uuids": imported_uuids, "cancelled": cancelled, "stopped": stopped,
                "skipped_edited": [{"uuid": p.uuid, "name": p.original_filename}
                                   for p in skipped]}
@@ -456,12 +460,29 @@ def parts(p) -> tuple[list[dict], str | None]:
     return [{**x, "path": str(x["path"])} for x in r], None
 
 
+def already_in(dst: Path, photos: list) -> set[str]:
+    """Which of these source photos DST already has (read fresh, just before importing),
+    so a photo is never imported twice even if the list shown was out of date."""
+    if not photos:
+        return set()
+    return set(dedupe.match([dedupe.Item.from_photo(p) for p in photos],
+                            [dedupe.Item.from_photo(d) for d in _photos(dst)]).pairs)
+
+
+def _already(p, dst: Path) -> dict:
+    return {"uuid": p.uuid, "name": p.original_filename, "already": True,
+            "reason": f"already in “{dst.stem}”, so it wasn’t imported again"}
+
+
 def manifest(src: Path, uuids: list[str], dst: Path | None = None) -> dict:
     """What the Mac app needs to create each photo (PhotoKit), plus what it can't import."""
     wanted = set(uuids)
     items, problems = [], []
-    for p in _photos(src):
-        if p.uuid not in wanted:
+    chosen = [p for p in _photos(src) if p.uuid in wanted]
+    there = already_in(dst, chosen) if dst is not None else set()
+    for p in chosen:
+        if p.uuid in there:
+            problems.append(_already(p, dst))
             continue
         files, why = parts(p)
         if why:
@@ -562,6 +583,7 @@ def finish(src: Path, dst: Path, run: dict, emit=lambda *a, **k: None) -> dict:
 
     imported = [s for s, d in created.items() if d in made]
     summary = {"imported": len(imported), "requested": run.get("requested", len(created)),
+               "already_in_dest": [f["uuid"] for f in failed if f.get("already")],
                "failed": failed, "imported_uuids": imported,
                "cancelled": bool(run.get("cancelled")), "stopped": run.get("stopped")
                or (stop_reason(dst, run["refused"]) if run.get("refused") else None),

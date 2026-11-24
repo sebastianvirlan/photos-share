@@ -14,8 +14,11 @@ def adj(*ops):
 
 
 @pytest.fixture(autouse=True)
-def _no_waiting(monkeypatch):
+def _no_waiting(monkeypatch, request):
     monkeypatch.setattr(importer, "ARRIVE_WAIT", 0)
+    # Most tests fake one photo list for every library; the guard has its own tests.
+    if "real_guard" not in request.keywords:
+        monkeypatch.setattr(importer, "already_in", lambda dst, photos: set())
 
 
 def photo(uuid, name=None, edited_ops=None, **kw):
@@ -573,3 +576,53 @@ def test_finish_reads_the_apps_journal(monkeypatch, lib):
                        "failed": [], "cancelled": False}}
     out = importer.finish(lib, lib.with_name("D.photoslibrary"), journal)
     assert (out["imported"], out["requested"], out["imported_uuids"]) == (1, 1, ["A1"])
+
+
+@pytest.mark.real_guard
+def test_run_import_never_imports_a_photo_twice(monkeypatch):
+    src = [photo("A"), photo("B")]
+    dest = [photo("D1", fingerprint="fp-A")]          # A is already there
+    monkeypatch.setattr(importer, "_photos", lambda p: src if p.name == "s.photoslibrary" else dest)
+    monkeypatch.setattr(importer, "_wait_for_library", lambda p: None)
+    monkeypatch.setattr(importer, "check_space", lambda dst, paths: None)
+    exported = []
+
+    def fake_export(p, folder, mode):
+        exported.append(p.uuid)
+        f = folder / p.original_filename
+        f.write_bytes(b"x")
+        return [f]
+    monkeypatch.setattr(importer, "export_photo", fake_export)
+
+    class Lib(FakeLibrary):
+        def open(self, path):
+            pass
+
+        def import_photos(self, paths, skip_duplicate_check=False):
+            return [Imported(Path(x).name) for x in paths]
+
+    monkeypatch.setitem(sys.modules, "photoscript", types.SimpleNamespace(PhotosLibrary=Lib))
+    out = importer.run_import(Path("/s.photoslibrary"), Path("/d.photoslibrary"), ["A", "B"])
+    assert exported == ["B"]
+    assert out["imported_uuids"] == ["B"] and out["already_in_dest"] == ["A"]
+    assert out["requested"] == 2 and out["failed"][0]["already"] is True
+
+
+@pytest.mark.real_guard
+def test_manifest_leaves_out_what_the_destination_has(monkeypatch, lib):
+    a, b = files_photo(lib, "A1"), files_photo(lib, "A2")
+    there = types.SimpleNamespace(**{**a.__dict__, "uuid": "D1"})
+    monkeypatch.setattr(importer, "_photos", lambda p: [a, b] if p == lib else [there])
+    monkeypatch.setattr(importer, "check_space", lambda dst, paths: None)
+    out = importer.manifest(lib, ["A1", "A2"], lib.with_name("D.photoslibrary"))
+    assert [i["source_uuid"] for i in out["items"]] == ["A2"]
+    assert out["problems"] == [{"uuid": "A1", "name": a.original_filename, "already": True,
+                                "reason": "already in “D”, so it wasn’t imported again"}]
+
+
+def test_finish_lists_what_was_already_there(monkeypatch, lib):
+    monkeypatch.setattr(importer, "_photos", lambda p: [])
+    out = importer.finish(lib, lib.with_name("D.photoslibrary"),
+                          {"requested": 1, "created": [],
+                           "failed": [{"uuid": "A1", "name": "x", "reason": "already", "already": True}]})
+    assert out["already_in_dest"] == ["A1"]

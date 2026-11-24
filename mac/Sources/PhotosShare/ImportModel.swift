@@ -29,7 +29,10 @@ struct ImportPlan: Codable {
 }
 
 struct ImportSummary: Codable {
-    struct Problem: Codable, Hashable { let uuid: String; let name: String?; let reason: String }
+    struct Problem: Codable, Hashable {
+        let uuid: String; let name: String?; let reason: String
+        var already: Bool? = nil   // already in the destination: skipped, not a failure
+    }
     struct Named: Codable, Hashable { let uuid: String; let name: String? }
     let imported: Int
     let requested: Int
@@ -38,6 +41,9 @@ struct ImportSummary: Codable {
     var imported_uuids: [String]? = nil
     var cancelled: Bool? = nil
     var stopped: String? = nil
+    var already_in_dest: [String]? = nil
+    /// Real problems, leaving out photos that were skipped because they're already there.
+    var problems: [Problem] { failed.filter { $0.already != true } }
 }
 
 enum EditedMode: String, CaseIterable, Identifiable {
@@ -250,7 +256,7 @@ final class ImportModel {
 
     /// What was imported is now in the destination: mark it so, and take it out of the selection.
     private func apply(_ result: ImportSummary) {
-        let imported = Set(result.imported_uuids ?? [])
+        let imported = Set(result.imported_uuids ?? []).union(result.already_in_dest ?? [])
         notImported = lastRequested.subtracting(imported)
         guard var p = plan, !imported.isEmpty else { return }
         for i in p.items.indices where imported.contains(p.items[i].uuid) { p.items[i].in_dest = true }

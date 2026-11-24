@@ -287,7 +287,8 @@ struct ImportView: View {
     @ViewBuilder private var resultStrip: some View {
         if !model.isImporting, model.summary != nil || model.importError != nil {
             let s = model.summary
-            let problems = (s?.failed.count ?? 0) + (s?.skipped_edited.count ?? 0)
+            let problems = (s?.problems.count ?? 0) + (s?.skipped_edited.count ?? 0)
+            let already = s?.already_in_dest?.count ?? 0
             HStack(spacing: 12) {
                 if let error = model.importError {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -298,11 +299,12 @@ struct ImportView: View {
                         .foregroundStyle(.orange).lineLimit(3).textSelection(.enabled)
                 } else if let s {
                     // Green only when everything asked for arrived, without problems.
-                    let all = problems == 0 && s.requested > 0 && s.imported >= s.requested && s.cancelled != true
-                    let none = s.imported == 0 && s.cancelled != true
+                    let all = problems == 0 && s.requested > 0 && s.imported + already >= s.requested && s.cancelled != true
+                    let none = s.imported == 0 && already == 0 && s.cancelled != true
                     let dest = "“\(model.plan?.dest_name ?? "")”"
                     Label((none ? "Nothing was imported into \(dest)"
                            : "\(s.cancelled == true ? "Cancelled: imported" : "Imported") \(s.imported) of \(s.requested) into \(dest)")
+                          + (already > 0 ? " · \(already) already there, not imported again" : "")
                           + (problems > 0 ? " · \(problems) to look at"
                              : all || s.cancelled == true ? "" : " · Photos gave no reason"),
                           systemImage: all ? "checkmark.circle.fill" : none ? "xmark.octagon.fill" : "exclamationmark.circle.fill")
@@ -351,7 +353,7 @@ struct ImportView: View {
                             .font(.caption.monospaced()).textSelection(.enabled)
                     }
                 }
-                if let failed = s?.failed, !failed.isEmpty {
+                if let failed = s?.problems, !failed.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Label("\(failed.count) problems", systemImage: "exclamationmark.triangle")
                             .font(.headline).foregroundStyle(.orange)
