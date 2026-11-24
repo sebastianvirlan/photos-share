@@ -113,15 +113,16 @@ struct CleanupView: View {
             .padding(.horizontal, 24).padding(.bottom, 10)
 
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: tileSize), spacing: 3)], spacing: 3) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: tileSize), spacing: 8)], spacing: 8) {
                     ForEach(model.rows(group)) { row in
                         Button { comparing = row } label: {
                             Thumbnail(path: row.thumb, maxPixels: ZoomControl.pixels(for: tileSize))
                                 .aspectRatio(1, contentMode: .fit)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
                                 .overlay(alignment: .topTrailing) {
                                     Image(systemName: group.symbol)
                                         .foregroundStyle(.white, color(group))
-                                        .font(.system(size: 15)).padding(4)
+                                        .font(.system(size: 15)).padding(6)
                                 }
                         }
                         .buttonStyle(.plain)

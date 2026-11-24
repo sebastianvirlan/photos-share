@@ -255,7 +255,7 @@ struct CopyTile: View {
         VStack(alignment: .leading, spacing: 3) {
             Thumbnail(path: copy.thumb, maxPixels: ZoomControl.pixels(for: size))
                 .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
                 .opacity(removing ? 0.55 : 1)
                 .overlay(alignment: .topLeading) {
                     if keep {

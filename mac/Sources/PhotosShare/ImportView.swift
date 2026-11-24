@@ -149,7 +149,7 @@ struct ImportView: View {
                      : "No photos match these filters.", symbol: "checkmark.circle")
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: tileSize), spacing: 3)], spacing: 3) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: tileSize), spacing: 8)], spacing: 8) {
                         ForEach(items) { item in
                             ImportTile(item: item, selected: model.selection.contains(item.uuid),
                                        destName: model.plan?.dest_name ?? "",
@@ -425,6 +425,7 @@ struct ImportTile: View {
     var body: some View {
         Thumbnail(path: item.thumb, maxPixels: maxPixels)
             .aspectRatio(1, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .opacity(item.in_dest ? 0.45 : 1)
             .overlay(alignment: .topTrailing) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -451,7 +452,7 @@ struct ImportTile: View {
                         .background(.ultraThinMaterial, in: Capsule()).padding(5)
                 }
             }
-            .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 3))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 3))
             .contentShape(Rectangle())
             .help(item.name ?? item.uuid)
     }
