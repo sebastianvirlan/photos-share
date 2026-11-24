@@ -51,9 +51,18 @@ class Item:
 
     @property
     def fallback_key(self):
+        # The moment, not its text: the same instant can be stored with different time zones.
         if self.filename and self.size:
-            return (self.filename, self.size, self.date)
+            return (self.filename, self.size, _instant(self.date))
         return None
+
+
+def _instant(date: str):
+    from datetime import datetime
+    try:
+        return int(datetime.fromisoformat(date).timestamp())
+    except ValueError:
+        return date
 
 
 @dataclass

@@ -396,3 +396,14 @@ def test_fallback_matches_are_checksummed(tmp_path):
 def test_needs_review_blocks_trashing_whole_library(tmp_path):
     r = pair(tmp_path, dst_kw={"path": None})
     assert not dedupe.all_verified(r) and r.total == 1
+
+
+def test_fallback_matches_the_same_moment_in_another_time_zone():
+    src = dedupe.Item(uuid="S", fingerprint=None, filename="img_1.heic", size=100,
+                      date="2024-07-31T18:30:21+03:00", edited=False)
+    dst = dedupe.Item(uuid="D", fingerprint=None, filename="img_1.heic", size=100,
+                      date="2024-07-31T15:30:21+00:00", edited=False)
+    assert dedupe.match([src], [dst]).pairs == {"S": ("D", "filename, size and date")}
+    later = dedupe.Item(uuid="D2", fingerprint=None, filename="img_1.heic", size=100,
+                        date="2024-07-31T18:30:22+03:00", edited=False)
+    assert dedupe.match([src], [later]).pairs == {}

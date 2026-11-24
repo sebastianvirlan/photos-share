@@ -519,6 +519,7 @@ def _db_photos(path: Path, uuids: set[str], wait: float = 30) -> dict:
 def finish(src: Path, dst: Path, run: dict, emit=lambda *a, **k: None) -> dict:
     """After the Mac app created the photos: check each against its source, and set titles,
     captions and keywords (which PhotoKit can't) through Photos."""
+    run = run.get("run", run)   # the app hands over its whole journal; the run is inside
     created = {c["source_uuid"]: c["created"].split("/")[0] for c in run.get("created", [])}
     failed = list(run.get("failed", []))
     emit("progress", phase="checking", done=0, total=len(created))

@@ -561,3 +561,15 @@ def test_find_arrived_only_counts_photos_added_since(monkeypatch):
     got = importer.find_arrived(Path("/d.photoslibrary"), {"img_1.heic": 1, "img_2.heic": 2},
                                 now - timedelta(seconds=1), wait=0)
     assert got == {"img_1.heic": "NEW", "img_2.heic": "N2"}
+
+
+def test_finish_reads_the_apps_journal(monkeypatch, lib):
+    """The app passes its whole journal ({..., "run": {...}}); this once read as 0 of 0."""
+    a = files_photo(lib, "A1")
+    monkeypatch.setattr(importer, "_photos", lambda p: [a] if p.name == "S.photoslibrary"
+                        else [types.SimpleNamespace(**{**a.__dict__, "uuid": "D1"})])
+    journal = {"id": "J", "source": str(lib), "dest": "x", "started": 0,
+               "run": {"requested": 1, "created": [{"source_uuid": "A1", "created": "D1/L0/001"}],
+                       "failed": [], "cancelled": False}}
+    out = importer.finish(lib, lib.with_name("D.photoslibrary"), journal)
+    assert (out["imported"], out["requested"], out["imported_uuids"]) == (1, 1, ["A1"])
