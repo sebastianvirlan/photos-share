@@ -17,6 +17,7 @@ TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 TAILSCALE_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 MIN_FUNNEL_PASSWORD = 8
 FUNNEL_WAIT = 8.0   # seconds to watch Tailscale's output when starting Funnel
+TAILSCALE_WAIT = 20.0  # seconds to wait for Tailscale to connect (e.g. just opened)
 MODES = ("local", "tailscale", "funnel")
 
 
@@ -75,17 +76,17 @@ class Share:
     def _resolve_network(self) -> tuple[str, str]:
         cfg = self.cfg
         if cfg.mode == "tailscale":
-            ip = tailscale_ip()
+            ip = _wait_for(tailscale_ip)
             if not ip:
-                raise ShareError("No Tailscale address found. Is Tailscale installed and connected?")
+                raise ShareError(tailscale_problem())
             return ip, f"http://{tailscale_name() or ip}:{cfg.port}"
         if cfg.mode == "funnel":
             if not tailscale_cli():
                 raise ShareError("Tailscale's command-line tool wasn't found. Install the "
                                  "Tailscale app from tailscale.com, or `brew install tailscale`.")
-            name = tailscale_name()
+            name = _wait_for(tailscale_name)
             if not name:
-                raise ShareError("Couldn't get this Mac's Tailscale name. Is Tailscale connected?")
+                raise ShareError(tailscale_problem())
             return "127.0.0.1", f"https://{name}"
         return cfg.host, f"http://{cfg.host}:{cfg.port}"
 
@@ -211,6 +212,46 @@ def tailscale_cli() -> str | None:
     if found:
         return found
     return TAILSCALE_APP_CLI if Path(TAILSCALE_APP_CLI).exists() else None
+
+
+def _wait_for(get):
+    """Tailscale takes a few seconds to connect after it's opened: keep asking until then."""
+    deadline = time.monotonic() + TAILSCALE_WAIT
+    while True:
+        found = get()
+        if found or time.monotonic() >= deadline:
+            return found
+        time.sleep(1)
+
+
+def tailscale_state() -> str | None:
+    """Tailscale's own state ("Running", "Stopped", "NeedsLogin", …), "NotRunning" when the
+    app isn't running, or None when it isn't installed."""
+    cli = tailscale_cli()
+    if not cli:
+        return None
+    try:
+        out = subprocess.run([cli, "status", "--json"], capture_output=True, text=True,
+                             timeout=5).stdout
+        return json.loads(out).get("BackendState") or "NotRunning"
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return "NotRunning"
+
+
+def tailscale_problem() -> str:
+    """Why there's no Tailscale address, in words the user can act on."""
+    state = tailscale_state()
+    if state is None:
+        return "Tailscale isn't installed. Get the Tailscale app from tailscale.com."
+    if state == "NotRunning":
+        return "Tailscale isn't running. Open the Tailscale app, then try again."
+    if state == "Stopped":
+        return ("Tailscale is open but switched off. Turn it on from its menu bar icon, "
+                "then try again.")
+    if state in ("NeedsLogin", "NeedsMachineAuth"):
+        return "Tailscale needs you to sign in. Use its menu bar icon, then try again."
+    return (f"Tailscale didn't connect within {TAILSCALE_WAIT:.0f} seconds "
+            f"(it says “{state}”). Try again once it shows as connected.")
 
 
 def tailscale_ip() -> str | None:

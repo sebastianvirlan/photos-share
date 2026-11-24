@@ -34,10 +34,24 @@ def test_funnel_requires_a_long_password(libs_dir):
             Share(ShareConfig(path=libs_dir, mode="funnel", password=pw))
 
 
-def test_tailscale_mode_needs_tailscale(libs_dir, monkeypatch):
+@pytest.mark.parametrize("state, says", [
+    (None, "isn't installed"), ("NotRunning", "isn't running"), ("Stopped", "switched off"),
+    ("NeedsLogin", "sign in"), ("Starting", "didn't connect")])
+def test_tailscale_mode_needs_tailscale(libs_dir, monkeypatch, state, says):
+    monkeypatch.setattr(share_mod, "TAILSCALE_WAIT", 0)
     monkeypatch.setattr(share_mod, "tailscale_ip", lambda: None)
-    with pytest.raises(ShareError, match="No Tailscale address"):
+    monkeypatch.setattr(share_mod, "tailscale_state", lambda: state)
+    with pytest.raises(ShareError, match=says):
         Share(ShareConfig(path=libs_dir, mode="tailscale"))
+
+
+def test_tailscale_mode_waits_for_tailscale_to_connect(libs_dir, monkeypatch):
+    answers = iter([None, None, "100.101.102.103"])
+    monkeypatch.setattr(share_mod, "tailscale_ip", lambda: next(answers))
+    monkeypatch.setattr(share_mod, "tailscale_name", lambda: None)
+    monkeypatch.setattr(share_mod.time, "sleep", lambda _: None)
+    s = Share(ShareConfig(path=libs_dir, mode="tailscale", port=8123))
+    assert s.host == "100.101.102.103"
 
 
 def test_tailscale_mode_binds_tailscale_address(libs_dir, monkeypatch):
