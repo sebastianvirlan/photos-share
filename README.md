@@ -3,7 +3,7 @@
 Share macOS Photos libraries (e.g. on an external drive) as a Photos-style web page served
 from your Mac. Read-only, no uploads, no copies. The library is the source of truth.
 
-## Mac app (menu bar)
+## Mac app
 
 A native SwiftUI app (in `mac/`). It runs the Python tools from this checkout in the
 background.
@@ -14,11 +14,14 @@ scripts/build-app.sh          # builds Photos Share.app in /Applications and sho
 
 Requirements: `uv` (`brew install uv`) and Swift (`xcode-select --install`). Xcode isn't needed.
 
-The app lives in the menu bar and has two windows:
+One window, with the tools in a sidebar (⌘1–⌘4). Each tool keeps running when you switch
+to another, so an import, a comparison and a duplicate scan can go at the same time; the
+sidebar shows what each is doing. Closing the window keeps the app (and sharing) running;
+click its Dock icon to bring it back. Quitting while something runs asks first.
 - **Sharing:** choose a library or folder and who can see it (this Mac, Tailscale, or a
   public link with a password). Then set the options: hidden photos, screenshots,
   downloads, video conversion and keep-awake. The viewer password is kept in your Keychain.
-- **Import Between Libraries:** a faster alternative to Photos' own import screen.
+- **Import:** a faster alternative to Photos' own import screen.
   - Pick the two libraries and see the source as a grid. Photos already in the destination
     are left out.
   - Filter by album, year, photos or videos, and favourites, then select: click, Shift-click for
@@ -50,7 +53,7 @@ The app lives in the menu bar and has two windows:
   first gets the others' favourite, albums, keywords, title, caption and place, then the
   copies are deleted (System Photo Library: to Recently Deleted) or put in the album
   “Duplicates to delete”. Previews are hashed once and remembered, so later scans are quick.
-- **Clean Up After Import:** pick the two libraries, see the three groups as thumbnails,
+- **Clean Up:** pick the two libraries, see the three groups as thumbnails,
   compare any photo side by side, then **Move to Trash**, **Delete N Photos** (when the source
   is the System Photo Library) or **Mark in Photos**. Every action re-checks both libraries
   first.
@@ -107,7 +110,7 @@ fresh previews.
 ## Cleaning up after importing one library into another
 
 Photos' **File → Import** from another library copies photos but can't delete them from the
-source. `photos-dedupe`, or **Clean Up After Import…** in the menu bar app, finds what's safe
+source. `photos-dedupe`, or **Clean Up** in the Mac app, finds what's safe
 to delete:
 
 ```sh

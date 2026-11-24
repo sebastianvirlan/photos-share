@@ -3,7 +3,6 @@ import SwiftUI
 
 struct ImportView: View {
     @Bindable var model: ImportModel
-    @Environment(\.openWindow) private var openWindow
     @State private var confirming = false
     @State private var tileFrames: [String: CGRect] = [:]
     @State private var marqueeBox: CGRect?
@@ -323,8 +322,7 @@ struct ImportView: View {
                     Button {
                         let c = CleanupModel.shared
                         c.prepare(source: model.source, dest: model.dest)
-                        openWindow(id: "cleanup")
-                        NSApp.activate(ignoringOtherApps: true)
+                        AppNavigation.shared.tool = .cleanup
                         Task { await c.compare() }
                     } label: {
                         Label("Open Clean Up", systemImage: "checkmark.shield")

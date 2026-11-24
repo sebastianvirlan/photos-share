@@ -13,64 +13,20 @@ struct PhotosShareApp: App {
         MainActor.assumeIsolated { Snapshot.runIfRequested() }
     }
 
+    @State private var nav = AppNavigation.shared
+
     var body: some Scene {
-        MenuBarExtra {
-            MenuContent(share: share)
-        } label: {
-            Image(systemName: share.isRunning ? "photo.fill.on.rectangle.fill" : "photo.on.rectangle")
+        Window("Photos Share", id: "main") {
+            MainView(nav: nav, share: share, importer: importer, cleanup: cleanup, duplicates: duplicates)
         }
-
-        Window("Sharing", id: "share") {
-            ShareView(model: share)
+        .commands {
+            CommandMenu("Tools") {
+                ForEach(Array(Tool.allCases.enumerated()), id: \.element) { i, tool in
+                    Button(tool.title) { nav.tool = tool }
+                        .keyboardShortcut(KeyEquivalent(Character("\(i + 1)")), modifiers: .command)
+                }
+            }
         }
-        .windowResizability(.contentSize)
-
-        Window("Import Between Libraries", id: "import") {
-            ImportView(model: importer)
-        }
-
-        Window("Clean Up After Import", id: "cleanup") {
-            CleanupView(model: cleanup)
-        }
-
-        Window("Find Duplicates", id: "duplicates") {
-            DuplicatesView(model: duplicates)
-        }
-    }
-}
-
-struct MenuContent: View {
-    let share: ShareModel
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        switch share.state {
-        case .running(let url): Text("Sharing: \(url)")
-        case .starting: Text("Starting…")
-        case .failed(let m): Text("Error: \(m)")
-        case .stopped: Text("Not sharing")
-        }
-        Divider()
-        Button("Sharing…") { show("share") }
-        if share.isActive {
-            Button("Stop Sharing") { share.stop() }
-            Button("Copy Link") { share.copyLink() }.disabled(!share.isRunning)
-            Button("Open in Browser") { share.openLink() }.disabled(!share.isRunning)
-        } else {
-            Button("Start Sharing") { share.start() }
-                .disabled(share.path == nil || (share.needsPassword && !share.hasPassword))
-        }
-        Divider()
-        Button("Import Between Libraries…") { show("import") }
-        Button("Clean Up After Import…") { show("cleanup") }
-        Button("Find Duplicates…") { show("duplicates") }
-        Divider()
-        Button("Quit Photos Share") { NSApp.terminate(nil) }.keyboardShortcut("q")
-    }
-
-    private func show(_ id: String) {
-        openWindow(id: id)
-        NSApp.activate(ignoringOtherApps: true)  // menu bar apps don't come forward on their own
     }
 }
 
@@ -80,10 +36,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in await EditSpike.run(manifest) }
         } else if let manifest = CreateSpike.requested {
             Task { @MainActor in await CreateSpike.run(manifest) }
+        } else if let dir = ProcessInfo.processInfo.environment["PS_WINDOW_SNAPSHOT"] {
+            Task { @MainActor in await WindowSnapshot.run(into: dir) }
         }
+    }
+
+    /// Closing the window keeps the app (and sharing) running; the Dock icon brings it back.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Quitting stops whatever is running: say what, and let you change your mind.
+    @MainActor
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        var running: [String] = []
+        if ImportModel.shared.isImporting { running.append("an import (photos already created stay; the rest can be finished later)") }
+        if case .acting = CleanupModel.shared.state { running.append("a clean-up") }
+        if DuplicatesModel.shared.state == .working { running.append("merging duplicates") }
+        if ShareModel.shared.isActive { running.append("sharing (the link stops working)") }
+        guard !running.isEmpty else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "Quit Photos Share?"
+        alert.informativeText = "This stops " + running.joined(separator: ", and ") + "."
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         ShareModel.shared.stopAndWait()  // never leave a public link or keep-awake behind
+    }
+}
+
+
+/// Debug: `PS_WINDOW_SNAPSHOT=dir PhotosShare` saves the real window for each tool, then quits
+/// (ImageRenderer can't draw the sidebar or AppKit controls; the window itself can).
+@MainActor
+enum WindowSnapshot {
+    static func run(into dir: String) async {
+        try? await Task.sleep(for: .seconds(2))
+        for tool in Tool.allCases {
+            AppNavigation.shared.tool = tool
+            try? await Task.sleep(for: .seconds(1))
+            guard let window = NSApp.windows.first(where: { $0.isVisible }) else { continue }
+            // The real window as on screen (needs Screen Recording permission for the caller).
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            p.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", "\(dir)/window-\(tool.rawValue).png"]
+            try? p.run()
+            p.waitUntilExit()
+        }
+        NSApp.terminate(nil)
     }
 }

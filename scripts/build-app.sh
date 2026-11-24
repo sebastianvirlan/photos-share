@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds "Photos Share.app": the native SwiftUI menu bar app in mac/, which runs the
+# Builds "Photos Share.app": the native SwiftUI app in mac/, which runs the
 # Python tools from this checkout via uv.
 # Usage: scripts/build-app.sh [destination folder]
 #   Default: /Applications if writable (it is for admin users), else ~/Applications.
@@ -38,7 +38,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.2.0</string>
   <key>CFBundleVersion</key><string>2</string>
-  <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Photos Share asks Photos to open a library and collect photos into an album for you to review.</string>
@@ -51,5 +50,5 @@ PLIST
 codesign --force --sign - "$APP" >/dev/null 2>&1 || echo "warning: ad-hoc signing failed" >&2
 
 echo "Built: $APP"
-echo "Open it; it appears as an icon in the menu bar (no Dock icon)."
+echo "Open it from Applications; it shows one window with the tools in a sidebar."
 [ -z "${NO_REVEAL:-}" ] && open -R "$APP" 2>/dev/null || true   # show it in Finder
