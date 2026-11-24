@@ -13,6 +13,11 @@ def adj(*ops):
     return types.SimpleNamespace(adjustments=[{"identifier": o} for o in ops])
 
 
+@pytest.fixture(autouse=True)
+def _no_waiting(monkeypatch):
+    monkeypatch.setattr(importer, "ARRIVE_WAIT", 0)
+
+
 def photo(uuid, name=None, edited_ops=None, **kw):
     base = dict(uuid=uuid, original_filename=name or f"IMG_{uuid}.HEIC",
                 hasadjustments=edited_ops is not None, adjustments=adj(*(edited_ops or [])),
@@ -483,6 +488,7 @@ def test_run_import_reports_photos_that_photos_silently_left_out(monkeypatch):
             return [Imported(Path(x).name) for x in paths if "IMG_A" in x]   # B and C refused
 
     monkeypatch.setitem(sys.modules, "photoscript", types.SimpleNamespace(PhotosLibrary=Lib))
+    monkeypatch.setattr(importer, "find_arrived", lambda dst, names, since: {})  # not there either
     out = importer.run_import(Path("/s.photoslibrary"), Path("/d.photoslibrary"), ["A", "B", "C"])
     assert out["imported_uuids"] == ["A"]
     assert {f["uuid"]: f["reason"] for f in out["failed"]} == {"B": importer.NOT_IMPORTED,
@@ -504,3 +510,54 @@ def test_manifest_reports_photos_it_cant_find(monkeypatch, lib):
     out = importer.manifest(lib, ["A1", "GONE"])
     assert [i["source_uuid"] for i in out["items"]] == ["A1"]
     assert [p["uuid"] for p in out["problems"]] == ["GONE"]
+
+
+def test_run_import_finds_photos_that_photos_didnt_report(monkeypatch):
+    """Photos' import can answer with nothing although the photos arrived."""
+    src_photos = [photo("A", favorite=True), photo("B")]
+    monkeypatch.setattr(importer, "_photos", lambda p: src_photos)
+    monkeypatch.setattr(importer, "_wait_for_library", lambda p: None)
+    monkeypatch.setattr(importer, "check_space", lambda dst, paths: None)
+
+    def fake_export(p, folder, mode):
+        f = folder / p.original_filename
+        f.write_bytes(b"x")
+        return [f]
+    monkeypatch.setattr(importer, "export_photo", fake_export)
+
+    class Lib(FakeLibrary):
+        def open(self, path):
+            pass
+
+        def import_photos(self, paths, skip_duplicate_check=False):
+            return []                                    # says nothing came in
+
+    looked = []
+
+    def arrived(dst, names, since):
+        looked.append(sorted(names))
+        return {"img_a.heic": "DA", "img_b.heic": "DB"}
+    monkeypatch.setattr(importer, "find_arrived", arrived)
+    made = {}
+
+    def Photo(uuid):
+        made[uuid] = Imported(uuid)
+        return made[uuid]
+    monkeypatch.setitem(sys.modules, "photoscript", types.SimpleNamespace(PhotosLibrary=Lib, Photo=Photo))
+    out = importer.run_import(Path("/s.photoslibrary"), Path("/d.photoslibrary"), ["A", "B"])
+    assert looked == [["img_a.heic", "img_b.heic"]]
+    assert out["imported"] == 2 and sorted(out["imported_uuids"]) == ["A", "B"]
+    assert out["failed"] == [] and out["stopped"] is None
+    assert made["DA"].favorite is True                   # details still copied across
+
+
+def test_find_arrived_only_counts_photos_added_since(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    dest = [types.SimpleNamespace(uuid="OLD", original_filename="IMG_1.HEIC", date_added=now - timedelta(days=3)),
+            types.SimpleNamespace(uuid="NEW", original_filename="IMG_1.HEIC", date_added=now),
+            types.SimpleNamespace(uuid="N2", original_filename="img_2.heic", date_added=now)]
+    monkeypatch.setattr(importer, "_photos", lambda p: dest)
+    got = importer.find_arrived(Path("/d.photoslibrary"), {"img_1.heic": 1, "img_2.heic": 2},
+                                now - timedelta(seconds=1), wait=0)
+    assert got == {"img_1.heic": "NEW", "img_2.heic": "N2"}

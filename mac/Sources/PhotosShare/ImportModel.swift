@@ -377,6 +377,7 @@ final class ImportModel {
             switch obj["phase"] as? String {
             case "opening": phase = "Opening the destination in Photos"
             case "checking": phase = "Checking the imported photos"
+            case "verifying": phase = "Looking for the imported photos in the destination"
             case "details": phase = "Adding titles, captions and keywords in Photos"
             default: phase = "Importing"
             }

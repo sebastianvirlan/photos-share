@@ -176,6 +176,35 @@ def apply_details(imported, src, albums_cache: dict, lib) -> None:
         albums_cache[title].add([imported])
 
 
+ARRIVE_TRIES, ARRIVE_WAIT = 4, 3.0
+
+
+def find_arrived(dst: Path, names: dict, since: datetime, tries: int | None = None,
+                 wait: float | None = None) -> dict:
+    """Photos' import sometimes reports nothing back even though the photos arrived. Look in
+    DST for photos added since `since` with these filenames: {filename (lower): dest uuid}."""
+    import time
+    tries = ARRIVE_TRIES if tries is None else tries
+    wait = ARRIVE_WAIT if wait is None else wait
+    found: dict[str, str] = {}
+    for attempt in range(tries):
+        if attempt:
+            time.sleep(wait)       # Photos writes its database a moment after importing
+        try:
+            photos = _photos(dst)
+        except Exception:  # noqa: BLE001
+            continue
+        for d in photos:
+            name = (d.original_filename or "").lower()
+            added = getattr(d, "date_added", None)
+            if name in names and name not in found and added is not None \
+                    and added.timestamp() >= since.timestamp() - 2:
+                found[name] = d.uuid
+        if len(found) == len(names):
+            break
+    return found
+
+
 NOT_IMPORTED = ("Photos didn’t import it and gave no reason (usually a full disk, or a file "
                 "Photos can’t read: try File → Import in Photos with it to see)")
 UNSURE = "Photos may not have imported it (what it imported couldn’t be matched back to this photo)"
@@ -287,8 +316,8 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
                     paths += [str(f) for f in files]
                 emit("progress", phase="importing", done=done, total=total)
                 if paths:
+                    since = datetime.now().astimezone()
                     result = lib.import_photos(paths, skip_duplicate_check=True)
-                    refused = 0 if result else refused + len(group)
                     unmatched = 0
                     for item in result:
                         p = by_name.get((item.filename or "").lower())
@@ -303,8 +332,25 @@ def run_import(src: Path, dst: Path, uuids: list[str], edited_mode: str = "skip"
                         except Exception as e:  # noqa: BLE001
                             failed.append({"uuid": p.uuid, "name": p.original_filename,
                                            "reason": f"imported, but details weren’t set: {e}"})
-                    # Photos' import just leaves out what it refuses: say so for each one.
+                    # Photos' reply can leave out photos it did import (and silently skips
+                    # what it refuses): look in the destination before calling them failed.
+                    unanswered = {n: p for n, p in by_name.items() if p.uuid not in imported_uuids}
+                    if unanswered:
+                        emit("progress", phase="verifying", done=done, total=total)
+                        for name, d_uuid in find_arrived(dst, unanswered, since).items():
+                            p = unanswered[name]
+                            if p.uuid in imported_uuids:
+                                continue
+                            imported_uuids.append(p.uuid)
+                            imported_count += 1
+                            try:
+                                apply_details(photoscript.Photo(d_uuid), p, albums_cache, lib)
+                            except Exception as e:  # noqa: BLE001
+                                failed.append({"uuid": p.uuid, "name": p.original_filename,
+                                               "reason": f"imported, but details weren’t set: {e}"})
                     tried = {p.uuid for p in by_name.values()}
+                    arrived = [p for p in group if p.uuid in imported_uuids]
+                    refused = 0 if arrived else refused + len(tried)
                     for p in group:
                         if p.uuid in tried and p.uuid not in imported_uuids:
                             failed.append({"uuid": p.uuid, "name": p.original_filename,
