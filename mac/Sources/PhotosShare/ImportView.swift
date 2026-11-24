@@ -19,7 +19,7 @@ struct ImportView: View {
             interruptedStrip
             content
         }
-        .frame(minWidth: 820, minHeight: 600)
+        .frame(minWidth: 820)
         .sheet(item: $previewing) { PhotoPreview(model: model, uuid: $0.id) }
         .confirmationDialog(confirmTitle, isPresented: $confirming, titleVisibility: .visible) {
             Button("Import") { model.start() }

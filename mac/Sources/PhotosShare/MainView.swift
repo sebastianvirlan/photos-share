@@ -62,7 +62,7 @@ struct MainView: View {
             .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
         } detail: {
             ZStack {
-                page(.share) { ShareView(model: share).frame(maxWidth: 640) }
+                page(.share) { ShareView(model: share) }
                 page(.importer) { ImportView(model: importer) }
                 page(.cleanup) { CleanupView(model: cleanup) }
                 page(.duplicates) { DuplicatesView(model: duplicates) }

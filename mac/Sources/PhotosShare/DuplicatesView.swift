@@ -13,7 +13,7 @@ struct DuplicatesView: View {
             Divider()
             content
         }
-        .frame(minWidth: 820, minHeight: 600)
+        .frame(minWidth: 820)
         .sheet(item: $previewing) { target in
             if let group = model.groups.first(where: { g in g.copies.contains { $0.uuid == target.id } }) {
                 DuplicatePreview(group: group, uuid: target.id)

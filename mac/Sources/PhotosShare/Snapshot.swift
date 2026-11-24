@@ -142,7 +142,7 @@ enum Snapshot {
                           source_name: "iPhone 13 Backup", dest_name: "Trips", albums: ["Holiday", "Family"], items: items)
     }()
 
-    private static let sample: CleanupReport = {
+    static let sample: CleanupReport = {
         func row(_ n: Int, reason: String? = nil, dest: Bool = true) -> CleanupRow {
             CleanupRow(uuid: "U\(n)", name: "img_\(1000 + n).heic", date: "2023-09-1\(n % 9)T10:00:00+01:00",
                        edited: n % 7 == 0, thumb: nil, dest: dest ? "D\(n)" : nil,

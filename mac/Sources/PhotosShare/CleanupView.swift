@@ -14,7 +14,7 @@ struct CleanupView: View {
             Divider()
             content
         }
-        .frame(minWidth: 720, minHeight: 520)
+        .frame(minWidth: 720)
         .sheet(item: $comparing) { row in CompareSheet(row: row, report: model.report, group: group) }
         .confirmationDialog(confirmTitle, isPresented: Binding(get: { confirm != nil },
                                                                  set: { if !$0 { confirm = nil } }),

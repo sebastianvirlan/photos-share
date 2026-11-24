@@ -73,6 +73,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum WindowSnapshot {
     static func run(into dir: String) async {
         try? await Task.sleep(for: .seconds(2))
+        // Clean Up with sample results, so its action bar shows (nothing is saved).
+        CleanupModel.shared.showForSnapshot(Snapshot.sample,
+                                            source: URL(fileURLWithPath: "/Volumes/HDD/iPhone 13 Backup.photoslibrary"),
+                                            dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
         for tool in Tool.allCases {
             AppNavigation.shared.tool = tool
             try? await Task.sleep(for: .seconds(1))

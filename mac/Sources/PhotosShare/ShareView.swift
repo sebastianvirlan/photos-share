@@ -70,27 +70,36 @@ struct ShareView: View {
                 }
             }
 
-            Section {
-                status
-                HStack {
-                    if model.isActive {
-                        Button("Stop Sharing", role: .destructive) { model.stop() }
-                    } else {
-                        Button("Start Sharing") { model.start() }
-                            .keyboardShortcut(.defaultAction)
-                            .disabled(model.path == nil || (model.needsPassword && !model.hasPassword))
-                    }
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: 560)
+        .frame(maxWidth: .infinity)
+        // Always in view, however long the form gets.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                Divider()
+                HStack(spacing: 12) {
+                    status
                     Spacer()
                     if model.isRunning {
                         Button("Copy Link") { model.copyLink() }
                         Button("Open") { model.openLink() }
                     }
+                    if model.isActive {
+                        Button("Stop Sharing", role: .destructive) { model.stop() }
+                            .controlSize(.large)
+                    } else {
+                        Button("Start Sharing") { model.start() }
+                            .keyboardShortcut(.defaultAction)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .disabled(model.path == nil || (model.needsPassword && !model.hasPassword))
+                    }
                 }
+                .padding(.horizontal, 24).padding(.vertical, 14)
             }
+            .background(.bar)
         }
-        .formStyle(.grouped)
-        .frame(width: 480)
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder private var status: some View {
