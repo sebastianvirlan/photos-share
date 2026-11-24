@@ -207,6 +207,10 @@ final class ImportModel {
         phase = "Starting"
         done = 0
         total = uuids.count
+        ImportLog.write("=== Import \(uuids.count) from “\(source!.path)” into “\(dest!.path)” — "
+                        + (keepsEdits ? "creating them with PhotoKit (destination is the System Photo Library)"
+                           : "through Photos’ import (destination isn’t the System Photo Library; edited: \(editedMode.rawValue))"))
+        ImportLog.write("  selected: " + uuids.sorted().joined(separator: ", "))
         if keepsEdits {
             Task { await importKeepingEdits(uuids) }
         } else {
@@ -228,6 +232,7 @@ final class ImportModel {
     }
 
     private func stopImporting(_ error: String) {
+        ImportLog.write("  stopped: \(error)")
         importError = error
         isImporting = false
         process = nil
@@ -265,9 +270,10 @@ final class ImportModel {
             process = try Tools.stream(
                 "photos-import",
                 [source.path, dest.path, "--uuids-file", list.path, "--edited", editedMode.rawValue, "--json"],
-                onLine: { [weak self] line in self?.handle(line) },
+                onLine: { [weak self] line in ImportLog.tool(line); self?.handle(line) },
                 onExit: { [weak self] code, stderr in
                     try? FileManager.default.removeItem(at: list)
+                    ImportLog.write("  photos-import exited \(code)" + (stderr.isEmpty ? "" : ": \(stderr.suffix(2000))"))
                     self?.finished(code, stderr)
                 })
         } catch {
@@ -292,6 +298,8 @@ final class ImportModel {
                 throw PhotoKitImport.Failure(err.split(separator: "\n").last.map(String.init) ?? "photos-import failed")
             }
             let manifest = try JSONDecoder().decode(PhotoKitImport.Manifest.self, from: out)
+            ImportLog.write("  found in the source: \(manifest.items.count) to create, \(manifest.problems.count) can’t be")
+            for p in manifest.problems { ImportLog.write("    \(p.name ?? p.uuid): \(p.reason)") }
             try await PhotoKitImport.authorize()
 
             var journal = PhotoKitImport.Journal(
@@ -307,6 +315,10 @@ final class ImportModel {
                 rest = rest.dropFirst(batch.count)
                 let before = journal.run.created.count
                 await PhotoKitImport.create(batch, albums: albums, into: &journal.run)
+                ImportLog.write("  batch of \(batch.count): created \(journal.run.created.count - before)")
+                for f in journal.run.failed.suffix(batch.count - (journal.run.created.count - before)) {
+                    ImportLog.write("    \(f.name ?? f.uuid): \(f.reason)")
+                }
                 done += batch.count
                 refused = journal.run.created.count > before ? 0 : refused + batch.count
                 try? journal.save()   // if the app stops now, the next launch can finish this
@@ -333,8 +345,11 @@ final class ImportModel {
         do {
             process = try Tools.stream(
                 "photos-import", [journal.source, journal.dest, "--finish", journal.file.path, "--json"],
-                onLine: { [weak self] line in self?.handle(line) },
-                onExit: { [weak self] code, stderr in self?.finished(code, stderr) })
+                onLine: { [weak self] line in ImportLog.tool(line); self?.handle(line) },
+                onExit: { [weak self] code, stderr in
+                    ImportLog.write("  photos-import --finish exited \(code)" + (stderr.isEmpty ? "" : ": \(stderr.suffix(2000))"))
+                    self?.finished(code, stderr)
+                })
         } catch {
             stopImporting("Couldn’t run photos-import: \(error.localizedDescription)")
         }
