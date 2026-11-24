@@ -132,7 +132,7 @@ enum Snapshot {
         ]
     }()
 
-    private static let importSample: ImportPlan = {
+    static let importSample: ImportPlan = {
         let items = (1...40).map { n in
             ImportItem(uuid: "I\(n)", name: "IMG_\(2000 + n).HEIC", date: "202\(n % 3 + 1)-0\(n % 9 + 1)-10T10:00:00+01:00",
                        thumb: nil, movie: n % 9 == 0, live: n % 4 == 0, favorite: n % 6 == 0, edited: n % 7 == 0,

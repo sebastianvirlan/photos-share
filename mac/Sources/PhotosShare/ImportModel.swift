@@ -100,7 +100,11 @@ final class ImportModel {
     private var lastRequested: Set<String> = []
     private(set) var notImported: Set<String> = []
     /// Importing runs under the grid, so you can keep browsing and selecting.
-    private(set) var isImporting = false
+    private(set) var isImporting = false {
+        didSet { if !isImporting { importing = [] } }
+    }
+    /// The photos in the import that's running: shown as importing, and can't be selected.
+    private(set) var importing: Set<String> = []
     private var process: Process?
     private var cancelled = false
     /// Imports cut short before they were checked (see `PhotoKitImport.Journal`).
@@ -169,6 +173,7 @@ final class ImportModel {
     private(set) var anchor: String?
 
     func toggle(_ item: ImportItem) {
+        guard !importing.contains(item.uuid) else { return }
         if selection.contains(item.uuid) { selection.remove(item.uuid) } else { selection.insert(item.uuid) }
         anchor = item.uuid
     }
@@ -184,7 +189,8 @@ final class ImportModel {
             return
         }
         let range = shown[min(from, to)...max(from, to)].map(\.uuid)
-        if selection.contains(anchor) { selection.formUnion(range) } else { selection.subtract(range) }
+        if selection.contains(anchor) { selection.formUnion(Set(range).subtracting(importing)) }
+        else { selection.subtract(range) }
     }
 
     enum MarqueeMode { case replace, add, remove }
@@ -192,12 +198,12 @@ final class ImportModel {
     /// Selection while dragging a box: `base` is the selection when the drag started.
     func marquee(base: Set<String>, touched: Set<String>, mode: MarqueeMode) {
         switch mode {
-        case .replace: selection = touched
-        case .add: selection = base.union(touched)
+        case .replace: selection = touched.subtracting(importing)
+        case .add: selection = base.union(touched.subtracting(importing))
         case .remove: selection = base.subtracting(touched)
         }
     }
-    func selectVisible() { selection.formUnion(visible.map(\.uuid)) }
+    func selectVisible() { selection.formUnion(Set(visible.map(\.uuid)).subtracting(importing)) }
     func deselectVisible() { selection.subtract(visible.map(\.uuid)) }
 
     func start() {
@@ -208,6 +214,7 @@ final class ImportModel {
         notImported = []
         cancelled = false
         isImporting = true
+        importing = uuids
         importError = nil
         summary = nil
         phase = "Starting"
@@ -250,7 +257,7 @@ final class ImportModel {
     }
 
     func selectNotImported() {
-        selection.formUnion(notImported)
+        selection.formUnion(notImported.subtracting(importing))
         notImported = []
     }
 
@@ -368,6 +375,7 @@ final class ImportModel {
         notImported = []
         cancelled = false
         isImporting = true
+        importing = lastRequested
         importError = nil
         summary = nil
         done = 0
@@ -433,6 +441,7 @@ final class ImportModel {
     /// For `--snapshot` renders only.
     func showProgressForSnapshot(done: Int, total: Int) {
         isImporting = true; phase = "Importing"; self.done = done; self.total = total
+        importing = Set((plan?.items ?? []).filter { !$0.in_dest }.prefix(total).map(\.uuid))
     }
 
     /// For `--snapshot` renders only.

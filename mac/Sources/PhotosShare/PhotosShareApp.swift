@@ -77,6 +77,12 @@ enum WindowSnapshot {
         CleanupModel.shared.showForSnapshot(Snapshot.sample,
                                             source: URL(fileURLWithPath: "/Volumes/HDD/iPhone 13 Backup.photoslibrary"),
                                             dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
+        // Import with sample photos and an import running, to show the importing tiles.
+        var plan = Snapshot.importSample
+        plan.dest_is_system = true
+        ImportModel.shared.showForSnapshot(plan, source: URL(fileURLWithPath: "/Volumes/HDD/iPhone 13 Backup.photoslibrary"),
+                                           dest: URL(fileURLWithPath: "/Volumes/HDD/Trips.photoslibrary"))
+        ImportModel.shared.showProgressForSnapshot(done: 3, total: 8)
         for tool in Tool.allCases {
             AppNavigation.shared.tool = tool
             try? await Task.sleep(for: .seconds(1))
@@ -88,6 +94,6 @@ enum WindowSnapshot {
             try? p.run()
             p.waitUntilExit()
         }
-        NSApp.terminate(nil)
+        exit(0)   // not terminate(): the sample import would ask "Quit Photos Share?"
     }
 }

@@ -152,6 +152,7 @@ struct ImportView: View {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: tileSize), spacing: 8)], spacing: 8) {
                         ForEach(items) { item in
                             ImportTile(item: item, selected: model.selection.contains(item.uuid),
+                                       importing: model.importing.contains(item.uuid),
                                        destName: model.plan?.dest_name ?? "",
                                        maxPixels: ZoomControl.pixels(for: tileSize))
                                 .background(GeometryReader { g in
@@ -419,6 +420,7 @@ struct PreviewTarget: Identifiable { let id: String }
 struct ImportTile: View {
     let item: ImportItem
     let selected: Bool
+    var importing = false
     let destName: String
     var maxPixels = 320
 
@@ -427,12 +429,27 @@ struct ImportTile: View {
             .aspectRatio(1, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .opacity(item.in_dest ? 0.45 : 1)
+            .overlay {
+                if importing {
+                    // On its way: dimmed, with a spinner, and no checkbox (it can't be picked again).
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8).fill(.black.opacity(0.45))
+                        VStack(spacing: 6) {
+                            ProgressView().controlSize(.small).tint(.white)
+                            Text("Importing").font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                }
+            }
             .overlay(alignment: .topTrailing) {
+                if !importing {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 18))
                     .foregroundStyle(selected ? Color.white : Color.white.opacity(0.9),
                                      selected ? Color.accentColor : Color.black.opacity(0.25))
                     .shadow(radius: 1).padding(5)
+                }
             }
             .overlay(alignment: .bottomLeading) {
                 HStack(spacing: 5) {
@@ -452,8 +469,8 @@ struct ImportTile: View {
                         .background(.ultraThinMaterial, in: Capsule()).padding(5)
                 }
             }
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 3))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selected && !importing ? Color.accentColor : .clear, lineWidth: 3))
             .contentShape(Rectangle())
-            .help(item.name ?? item.uuid)
+            .help(importing ? "\(item.name ?? item.uuid) is being imported" : item.name ?? item.uuid)
     }
 }
