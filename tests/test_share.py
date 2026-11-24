@@ -131,3 +131,14 @@ def test_start_funnel_reads_tailscale(monkeypatch, tmp_path, script, ok, expect)
             share.Share.start_funnel(s, wait=3)
         assert expect in str(e.value)
         assert s._funnel is None
+
+
+def test_tailscale_name_tries_every_tool(monkeypatch):
+    # A Homebrew `tailscale` on the PATH that can't reach the running app, then the app's own.
+    monkeypatch.setattr(share_mod, "tailscale_clis", lambda: ["/opt/homebrew/bin/tailscale", "/app"])
+    answers = {"/opt/homebrew/bin/tailscale": (None, "failed to connect to local tailscaled"),
+               "/app": ({"BackendState": "Running", "Self": {"DNSName": "mac.tail1.ts.net."}}, "")}
+    monkeypatch.setattr(share_mod, "_status", lambda cli: answers[cli])
+    assert share_mod.tailscale_name() == "mac.tail1.ts.net"
+    assert share_mod.tailscale_cli() == "/app"
+    assert share_mod.tailscale_state() == "Running"

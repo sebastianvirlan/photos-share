@@ -207,11 +207,33 @@ class Share:
 
 # ---- Tailscale helpers -----------------------------------------------------
 
+def tailscale_clis() -> list[str]:
+    """Every Tailscale command-line tool on this Mac: one on the PATH (e.g. Homebrew's) may
+    not talk to the Tailscale app that's actually running, so callers try each."""
+    found = [shutil.which("tailscale"), TAILSCALE_APP_CLI if Path(TAILSCALE_APP_CLI).exists() else None]
+    return list(dict.fromkeys(c for c in found if c))
+
+
 def tailscale_cli() -> str | None:
-    found = shutil.which("tailscale")
-    if found:
-        return found
-    return TAILSCALE_APP_CLI if Path(TAILSCALE_APP_CLI).exists() else None
+    """The tool that answers `status`, else the first one found."""
+    clis = tailscale_clis()
+    for cli in clis:
+        if _status(cli)[0] is not None:
+            return cli
+    return clis[0] if clis else None
+
+
+def _status(cli: str) -> tuple[dict | None, str]:
+    """(`tailscale status --json`, or None) and what went wrong."""
+    try:
+        r = subprocess.run([cli, "status", "--json"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, f"{cli}: {e}"
+    try:
+        return json.loads(r.stdout), ""
+    except ValueError:
+        said = (r.stderr or r.stdout).strip().splitlines()
+        return None, f"{cli}: {said[0] if said else f'exit code {r.returncode}'}"
 
 
 def _wait_for(get):
@@ -225,17 +247,21 @@ def _wait_for(get):
 
 
 def tailscale_state() -> str | None:
-    """Tailscale's own state ("Running", "Stopped", "NeedsLogin", …), "NotRunning" when the
-    app isn't running, or None when it isn't installed."""
-    cli = tailscale_cli()
-    if not cli:
+    """Tailscale's own state ("Running", "Stopped", "NeedsLogin", …), "NotRunning" when no
+    tool gets an answer, or None when it isn't installed."""
+    clis = tailscale_clis()
+    if not clis:
         return None
-    try:
-        out = subprocess.run([cli, "status", "--json"], capture_output=True, text=True,
-                             timeout=5).stdout
-        return json.loads(out).get("BackendState") or "NotRunning"
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return "NotRunning"
+    for cli in clis:
+        st, _ = _status(cli)
+        if st is not None:
+            return st.get("BackendState") or "NotRunning"
+    return "NotRunning"
+
+
+def _tool_errors() -> str:
+    errs = [e for e in (_status(c)[1] for c in tailscale_clis()) if e]
+    return ("\nTailscale said: " + "; ".join(errs)) if errs else ""
 
 
 def tailscale_problem() -> str:
@@ -244,12 +270,15 @@ def tailscale_problem() -> str:
     if state is None:
         return "Tailscale isn't installed. Get the Tailscale app from tailscale.com."
     if state == "NotRunning":
-        return "Tailscale isn't running. Open the Tailscale app, then try again."
+        return "Tailscale isn't running. Open the Tailscale app, then try again." + _tool_errors()
     if state == "Stopped":
         return ("Tailscale is open but switched off. Turn it on from its menu bar icon, "
                 "then try again.")
     if state in ("NeedsLogin", "NeedsMachineAuth"):
         return "Tailscale needs you to sign in. Use its menu bar icon, then try again."
+    if state == "Running":
+        return ("Tailscale is connected, but didn't give this Mac's name. Check MagicDNS is on "
+                "in the Tailscale admin console (DNS page)." + _tool_errors())
     return (f"Tailscale didn't connect within {TAILSCALE_WAIT:.0f} seconds "
             f"(it says “{state}”). Try again once it shows as connected.")
 
@@ -263,13 +292,13 @@ def tailscale_ip() -> str | None:
 
 
 def tailscale_name() -> str | None:
-    cli = tailscale_cli()
-    if not cli:
-        return None
-    try:
-        out = subprocess.run([cli, "status", "--json"], capture_output=True, text=True,
-                             timeout=5).stdout
-        # Full MagicDNS name: the short form doesn't resolve for people you share with.
-        return json.loads(out)["Self"]["DNSName"].rstrip(".") or None
-    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
-        return None
+    for cli in tailscale_clis():
+        st, _ = _status(cli)
+        try:
+            # Full MagicDNS name: the short form doesn't resolve for people you share with.
+            name = st["Self"]["DNSName"].rstrip(".") if st else None
+        except (KeyError, TypeError, AttributeError):
+            name = None
+        if name:
+            return name
+    return None
