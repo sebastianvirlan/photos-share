@@ -15,6 +15,10 @@ from pathlib import Path
 
 TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 TAILSCALE_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+# Without a terminal attached (as when the Mac app runs us), the binary inside Tailscale.app
+# tries to open the Tailscale app instead of acting as the command-line tool ("The Tailscale
+# GUI failed to start … CLIError error 3"). This makes it act as the command-line tool.
+TAILSCALE_ENV = {**os.environ, "TAILSCALE_BE_CLI": "1"}
 MIN_FUNNEL_PASSWORD = 8
 FUNNEL_WAIT = 8.0   # seconds to watch Tailscale's output when starting Funnel
 TAILSCALE_WAIT = 20.0  # seconds to wait for Tailscale to connect (e.g. just opened)
@@ -132,8 +136,9 @@ class Share:
         # Foreground mode: the public link exists only while this process runs. Tailscale's
         # output is read, not discarded: when Funnel isn't enabled for this Mac yet, it prints
         # a link to approve it and then waits, which would otherwise look like success.
-        proc = subprocess.Popen([tailscale_cli(), "funnel", str(self.cfg.port)],
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        proc = subprocess.Popen([tailscale_cli(), "funnel", str(self.cfg.port)], env=TAILSCALE_ENV,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True)
         lines: list[str] = []
         threading.Thread(target=lambda: [lines.append(l.rstrip()) for l in proc.stdout],
                          daemon=True).start()   # keeps draining, so Tailscale never blocks
@@ -226,7 +231,8 @@ def tailscale_cli() -> str | None:
 def _status(cli: str) -> tuple[dict | None, str]:
     """(`tailscale status --json`, or None) and what went wrong."""
     try:
-        r = subprocess.run([cli, "status", "--json"], capture_output=True, text=True, timeout=5)
+        r = subprocess.run([cli, "status", "--json"], env=TAILSCALE_ENV, stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, f"{cli}: {e}"
     try:
