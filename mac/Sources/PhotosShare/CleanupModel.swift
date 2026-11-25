@@ -169,9 +169,12 @@ final class CleanupModel {
         do {
             let text: String
             switch action {
-            case .mark, .trash:
-                let flag = action == .mark ? "--mark" : "--trash-library"
-                let r = try await dedupe([source.path, dest.path, "--json", flag, "--yes"])
+            case .mark:
+                // Only adds an album (nothing is removed): uses the comparison on screen.
+                text = try await markCompared(source: source, dest: dest)
+            case .trash:
+                // Removes photos: compares again first, in case either library changed.
+                let r = try await dedupe([source.path, dest.path, "--json", "--trash-library", "--yes"])
                 report = r
                 text = r.outcome ?? "Done."
             case .delete:
@@ -185,6 +188,23 @@ final class CleanupModel {
             message = (false, error.localizedDescription)
             state = .ready  // nothing happened; the user can choose again
         }
+    }
+
+    /// Puts the verified photos from the current comparison into an album in the source.
+    private func markCompared(source: URL, dest: URL) async throws -> String {
+        let ids = (report?.matched ?? []).map(\.uuid)
+        let list = FileManager.default.temporaryDirectory.appendingPathComponent("photos-mark-\(UUID().uuidString).txt")
+        try ids.joined(separator: "\n").write(to: list, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: list) }
+        let (_, out, err) = try await Tools.run("photos-dedupe", [source.path, dest.path, "--json", "--yes",
+                                                                 "--mark", "--uuids-file", list.path])
+        let obj = (try? JSONSerialization.jsonObject(with: out)) as? [String: Any]
+        if let e = obj?["error"] as? String { throw CleanupFailure(e) }
+        guard let outcome = obj?["outcome"] as? String else {
+            throw CleanupFailure(err.split(separator: "\n").last.map(String.init)
+                                 ?? "photos-dedupe failed")
+        }
+        return outcome
     }
 
     /// Runs photos-dedupe, following its progress lines; the last other line is the result.

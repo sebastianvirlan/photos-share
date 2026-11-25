@@ -484,6 +484,9 @@ def main(argv: list[str] | None = None) -> None:
     act.add_argument("--trash-library", action="store_true",
                      help="move the whole SOURCE library to the Trash (only if every photo "
                           "is verified in DEST)")
+    ap.add_argument("--uuids-file", type=Path, default=None,
+                    help="with --mark: mark these source photos (one id per line), as verified "
+                         "by an earlier comparison, instead of comparing again")
     ap.add_argument("--album", default=None, help="album name (default: 'In <dest> – safe to delete')")
     ap.add_argument("--yes", action="store_true", help="don't ask for confirmation in the terminal")
     ap.add_argument("--json", action="store_true",
@@ -523,6 +526,24 @@ def main(argv: list[str] | None = None) -> None:
                     "thumbnails": "Finding previews…"}.get(phase, phase)
             print(f"\r\033[K{text}", end="" if phase in ("reading", "checking") else "\n",
                   file=sys.stderr, flush=True)
+
+    if args.mark and args.uuids_file:
+        # Marking only adds to an album (nothing is removed), so the comparison the user just
+        # reviewed is enough: no need to read both libraries again.
+        try:
+            uuids = [u.strip() for u in args.uuids_file.read_text().split() if u.strip()]
+            if not uuids:
+                raise CleanupError("Nothing verified, so nothing to mark.")
+            album = args.album or f"In {dst.stem} – safe to delete"
+            added = mark(src, [Item(uuid=u, fingerprint=None, filename=None, size=None, date="", edited=False)
+                               for u in uuids], album)
+        except (OSError, CleanupError, RuntimeError) as e:
+            fail(str(e))
+        outcome = (f"Added {added:,} photos to the album “{album}”, now shown in Photos. "
+                   "Review it, then ⌘A (select all), ⌘⌫ (delete) and confirm. They stay "
+                   "in Recently Deleted for 30 days.")
+        print(json.dumps({"outcome": outcome}) if args.json else outcome, flush=True)
+        return
 
     progress = Progress(show, every=0.25 if args.json else 0.1)
     try:

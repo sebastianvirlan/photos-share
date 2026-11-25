@@ -407,3 +407,21 @@ def test_fallback_matches_the_same_moment_in_another_time_zone():
     later = dedupe.Item(uuid="D2", fingerprint=None, filename="img_1.heic", size=100,
                         date="2024-07-31T18:30:22+03:00", edited=False)
     assert dedupe.match([src], [later]).pairs == {}
+
+
+def test_mark_given_uuids_skips_comparing(tmp_path, monkeypatch, capsys):
+    from photos_share import dedupe as d
+    libs = []
+    for name in ("src", "dst"):
+        lib = tmp_path / f"{name}.photoslibrary"
+        (lib / "database").mkdir(parents=True)
+        (lib / "database" / "Photos.sqlite").touch()
+        libs.append(lib)
+    ids = tmp_path / "ids.txt"
+    ids.write_text("A\nB\n")
+    monkeypatch.setattr(d, "compare", lambda *a, **k: pytest.fail("compared again"))
+    marked = {}
+    monkeypatch.setattr(d, "mark", lambda src, items, album: marked.setdefault("u", [i.uuid for i in items]) and len(items))
+    d.main([str(libs[0]), str(libs[1]), "--mark", "--uuids-file", str(ids), "--json", "--yes"])
+    assert marked["u"] == ["A", "B"]
+    assert "Added 2 photos" in capsys.readouterr().out

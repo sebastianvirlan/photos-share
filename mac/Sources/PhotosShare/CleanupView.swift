@@ -145,9 +145,13 @@ struct CleanupView: View {
             if case .acting(let action) = model.state {
                 ProgressView().controlSize(.small)
                 let p = model.progress
-                Text((action == .delete ? "Re-checking, then deleting" : "Re-checking, then working")
-                     + (p.phase.isEmpty ? "…" : ": \(model.progressInfo.title)"
-                        + (p.total > 0 ? " \(p.done.formatted()) of \(p.total.formatted())" : "…")))
+                if action == .mark {
+                    Text("Opening “\(model.report?.source_name ?? "")” in Photos and adding \(count.formatted()) photos to an album…")
+                } else {
+                    Text((action == .delete ? "Re-checking, then deleting" : "Re-checking, then working")
+                         + (p.phase.isEmpty ? "…" : ": \(model.progressInfo.title)"
+                            + (p.total > 0 ? " \(p.done.formatted()) of \(p.total.formatted())" : "…")))
+                }
                 Spacer()
             } else if case .done = model.state {
                 Text("Done. Compare again to check the result.").foregroundStyle(.secondary)
