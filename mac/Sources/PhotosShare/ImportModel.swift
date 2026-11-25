@@ -110,6 +110,11 @@ final class ImportModel {
     private(set) var queued: Set<String> = []
     /// Importing or queued: shown with their state, and not selectable.
     var locked: Set<String> { importing.union(queued) }
+    /// Which import is current: signals from an earlier one (its tool exiting, its last
+    /// batch) are ignored, so they can't stop or miscount the one that followed it.
+    private var generation = 0
+    /// Set when an import finished well: the queue starts once its tool has exited.
+    private var queueAfterExit = false
     /// Libraries can't change while photos are on their way or waiting.
     var busy: Bool { isImporting || !queued.isEmpty }
     private var process: Process?
@@ -250,6 +255,8 @@ final class ImportModel {
 
     private func begin(_ uuids: Set<String>) {
         guard source != nil, dest != nil, !uuids.isEmpty, !isImporting else { return }
+        generation += 1
+        queueAfterExit = false
         lastRequested = uuids
         notImported = []
         cancelled = false
@@ -323,11 +330,11 @@ final class ImportModel {
             process = try Tools.stream(
                 "photos-import",
                 [source.path, dest.path, "--uuids-file", list.path, "--edited", editedMode.rawValue, "--json"],
-                onLine: { [weak self] line in ImportLog.tool(line); self?.handle(line) },
-                onExit: { [weak self] code, stderr in
+                onLine: { [weak self, gen = generation] line in ImportLog.tool(line); self?.handle(line, gen) },
+                onExit: { [weak self, gen = generation] code, stderr in
                     try? FileManager.default.removeItem(at: list)
                     ImportLog.write("  photos-import exited \(code)" + (stderr.isEmpty ? "" : ": \(stderr.suffix(2000))"))
-                    self?.finished(code, stderr)
+                    self?.finished(code, stderr, gen)
                 })
         } catch {
             stopImporting("Couldn’t run photos-import: \(error.localizedDescription)")
@@ -338,6 +345,7 @@ final class ImportModel {
     /// then lets photos-import check them and add titles, captions and keywords.
     private func importKeepingEdits(_ uuids: Set<String>) async {
         guard let source, let dest else { return }
+        let gen = generation
         do {
             phase = "Preparing"
             let list = try writeSelection(uuids)
@@ -350,6 +358,7 @@ final class ImportModel {
             guard code == 0 else {
                 throw PhotoKitImport.Failure(err.split(separator: "\n").last.map(String.init) ?? "photos-import failed")
             }
+            guard gen == generation else { return }
             let manifest = try JSONDecoder().decode(PhotoKitImport.Manifest.self, from: out)
             ImportLog.write("  found in the source: \(manifest.items.count) to create, \(manifest.problems.count) can’t be")
             for p in manifest.problems { ImportLog.write("    \(p.name ?? p.uuid): \(p.reason)") }
@@ -363,7 +372,7 @@ final class ImportModel {
             done = manifest.problems.count
             var refused = 0
             var rest = manifest.items[...]
-            while !rest.isEmpty && !cancelled {
+            while !rest.isEmpty && !cancelled && gen == generation {
                 let batch = Array(rest.prefix(PhotoKitImport.batchSize))
                 rest = rest.dropFirst(batch.count)
                 let before = journal.run.created.count
@@ -380,6 +389,10 @@ final class ImportModel {
                     break
                 }
             }
+            guard gen == generation else {   // stopped meanwhile: keep its journal to finish later
+                try? journal.save()
+                return
+            }
             if cancelled || journal.run.refused != nil {
                 journal.run.requested = journal.run.created.count + journal.run.failed.count
                 journal.run.cancelled = cancelled
@@ -387,7 +400,7 @@ final class ImportModel {
             try journal.save()
             finishRun(journal)
         } catch {
-            stopImporting(error.localizedDescription)
+            if gen == generation { stopImporting(error.localizedDescription) }
         }
     }
 
@@ -398,10 +411,10 @@ final class ImportModel {
         do {
             process = try Tools.stream(
                 "photos-import", [journal.source, journal.dest, "--finish", journal.file.path, "--json"],
-                onLine: { [weak self] line in ImportLog.tool(line); self?.handle(line) },
-                onExit: { [weak self] code, stderr in
+                onLine: { [weak self, gen = generation] line in ImportLog.tool(line); self?.handle(line, gen) },
+                onExit: { [weak self, gen = generation] code, stderr in
                     ImportLog.write("  photos-import --finish exited \(code)" + (stderr.isEmpty ? "" : ": \(stderr.suffix(2000))"))
-                    self?.finished(code, stderr)
+                    self?.finished(code, stderr, gen)
                 })
         } catch {
             stopImporting("Couldn’t run photos-import: \(error.localizedDescription)")
@@ -411,6 +424,8 @@ final class ImportModel {
     /// Finishes an import that was cut short: checks its photos and copies their details.
     func finishInterrupted(_ journal: PhotoKitImport.Journal) {
         guard !isImporting else { return }
+        generation += 1
+        queueAfterExit = false
         lastRequested = Set(journal.run.created.map(\.source_uuid))
         notImported = []
         cancelled = false
@@ -433,8 +448,8 @@ final class ImportModel {
         process?.interrupt()
     }
 
-    private func handle(_ line: String) {
-        guard let data = line.data(using: .utf8),
+    private func handle(_ line: String, _ gen: Int) {
+        guard gen == generation, let data = line.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let event = obj["event"] as? String else { return }
         switch event {
@@ -459,11 +474,8 @@ final class ImportModel {
             finishing = nil
             interrupted = PhotoKitImport.Journal.all()
             isImporting = false
-            // The queue goes next, unless this import stopped on a problem.
-            if !queued.isEmpty, summary?.stopped == nil, summary?.cancelled != true {
-                ImportLog.write("  starting the queue: \(queued.count) photos")
-                startQueue()
-            }
+            // The queue goes next (once this import's tool has exited), unless it stopped on a problem.
+            queueAfterExit = !queued.isEmpty && summary?.stopped == nil && summary?.cancelled != true
         case "error":
             stopImporting(obj["message"] as? String ?? "Import failed.")
         case "cancelled":
@@ -472,11 +484,16 @@ final class ImportModel {
         }
     }
 
-    private func finished(_ code: Int32, _ stderr: String) {
+    private func finished(_ code: Int32, _ stderr: String, _ gen: Int) {
+        guard gen == generation else { return }   // an earlier import's tool
         process = nil
         if isImporting {
             stopImporting(stderr.split(separator: "\n").last.map(String.init)
                           ?? "photos-import stopped unexpectedly (code \(code)).")
+        } else if queueAfterExit {
+            queueAfterExit = false
+            ImportLog.write("  starting the queue: \(queued.count) photos")
+            startQueue()
         }
     }
 
