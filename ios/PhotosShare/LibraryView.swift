@@ -110,13 +110,15 @@ struct PhotoGrid: View {
     @State private var open: Opened?
     /// The item shown in the viewer, kept in step as you swipe there.
     @State private var viewing: String?
-    @State private var columns = 3
+    /// Smallest tile width: as many tiles fit across as the screen allows (3 on iPhone,
+    /// 6–7 on iPad). Pinching changes it.
+    @State private var tileWidth: CGFloat = 130
     @Namespace private var zoom
 
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: columns), spacing: 2) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), spacing: 2)], spacing: 2) {
                 ForEach(Array(assets.enumerated()), id: \.element.id) { i, a in
                     Button { viewing = a.id; open = Opened(index: i) } label: {
                         Tile(libraryID: libraryID, asset: a)
@@ -155,8 +157,8 @@ struct PhotoGrid: View {
             }
         }
         .simultaneousGesture(MagnifyGesture().onEnded { v in
-            let next = v.magnification > 1 ? columns - 1 : columns + 1
-            withAnimation { columns = min(max(next, 1), 7) }
+            let next = v.magnification > 1 ? tileWidth * 1.4 : tileWidth / 1.4
+            withAnimation { tileWidth = min(max(next, 60), 500) }
         })
         // Opens like Photos: the photo zooms out of its tile, and a swipe down sends it back.
         .fullScreenCover(item: $open) { _ in
