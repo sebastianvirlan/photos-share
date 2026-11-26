@@ -64,8 +64,11 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
         @app.middleware("http")
         async def require_login(request: Request, call_next):
             # Registered last, so it runs first: nothing is served without a valid session.
-            if request.url.path in ("/login", "/logout") or auth.is_authed(
-                    request.cookies.get(COOKIE)):
+            # Browsers send the cookie; the iPhone app sends the token as a Bearer header.
+            bearer = request.headers.get("authorization", "")
+            token = bearer[7:] if bearer.lower().startswith("bearer ") else None
+            if request.url.path in ("/login", "/logout", "/api/login") or auth.is_authed(
+                    request.cookies.get(COOKIE)) or auth.is_authed(token):
                 return await call_next(request)
             if request.url.path == "/":
                 return RedirectResponse("/login", status_code=303)
@@ -89,11 +92,36 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
                             samesite="lax", secure=auth.secure_cookie)
             return resp
 
+        @app.post("/api/login")
+        async def api_login(request: Request):
+            """For the iPhone app: {"password": …} → {"token": …}. Same lockout as the page;
+            the token stops working when the password changes, like the cookie."""
+            if auth.locked_out():
+                return JSONResponse({"error": "Too many attempts. Try again in a few minutes."},
+                                    status_code=429)
+            try:
+                password = (await request.json()).get("password", "")
+            except (ValueError, AttributeError):
+                password = ""
+            if not isinstance(password, str):
+                password = ""   # still counts as a failed attempt
+            if not auth.check(password):
+                await asyncio.sleep(1)
+                return JSONResponse({"error": "Wrong password."}, status_code=401)
+            return {"token": auth.token}
+
         @app.get("/logout")
         def logout():
             resp = RedirectResponse("/login", status_code=303)
             resp.delete_cookie(COOKIE)
             return resp
+
+    @app.get("/api/info")
+    def info():
+        """What the iPhone app checks after connecting (behind the login, so it also tells
+        the app whether its token still works)."""
+        return {"app": "photos-share", "api": 1, "downloads": downloads,
+                "video": video_mode}
 
     @app.get("/api/libraries")
     def libraries():

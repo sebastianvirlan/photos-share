@@ -76,3 +76,33 @@ def test_sessions_survive_restart_but_not_password_change():
 def test_key_file_is_private(cache_root):
     Auth("pw-one-123", False)
     assert (cache_root / "auth.key").stat().st_mode & 0o777 == 0o600
+
+
+def api_login(client, password):
+    return client.post("/api/login", json={"password": password})
+
+
+def test_app_login_gives_a_token_used_as_bearer(locked):
+    assert api_login(locked, "nope").status_code == 401
+    r = api_login(locked, "correct-horse")
+    assert r.status_code == 200 and COOKIE not in r.cookies
+    token = r.json()["token"]
+    assert locked.get("/api/info").status_code == 401
+    ok = locked.get("/api/info", headers={"Authorization": f"Bearer {token}"})
+    assert ok.status_code == 200 and ok.json()["app"] == "photos-share"
+    assert locked.get("/api/info", headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
+def test_app_login_rejects_bad_bodies_and_locks_out(locked):
+    assert locked.post("/api/login", content=b"not json").status_code == 401
+    assert api_login(locked, 123).status_code == 401
+    for _ in range(MAX_FAILURES - 2):   # the two bad bodies count too
+        api_login(locked, "guess")
+    assert api_login(locked, "correct-horse").status_code == 429
+
+
+def test_token_stops_working_when_the_password_changes(make_client):
+    old, _ = make_client(auth=Auth("correct-horse", secure_cookie=False))
+    token = api_login(old, "correct-horse").json()["token"]
+    new, _ = make_client(auth=Auth("battery-staple", secure_cookie=False))
+    assert new.get("/api/info", headers={"Authorization": f"Bearer {token}"}).status_code == 401
