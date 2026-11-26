@@ -122,7 +122,11 @@ struct LibraryView: View {
                 // Only the back button and, on Photos, the Years / Months / All Photos switch.
                 ToolbarItem(placement: .principal) {
                     if case .ready = model.state, tab == .photos, !model.photos.isEmpty {
-                        GlassSwitcher(options: PhotosTab.Zoom.allCases.map { ($0, $0.title) }, selection: $zoom)
+                        Picker("Group by", selection: $zoom) {
+                            ForEach(PhotosTab.Zoom.allCases, id: \.self) { Text($0.title) }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 260)
                     } else {
                         Color.clear.frame(width: 1, height: 1)
                     }
@@ -145,7 +149,11 @@ struct LibraryView: View {
                 }
                 if case .ready = model.state {
                     ToolbarItem(placement: .bottomBar) {
-                        GlassSwitcher(options: Tab.allCases.map { ($0, $0.rawValue) }, selection: $tab)
+                        Picker("Show", selection: $tab) {
+                            ForEach(Tab.allCases, id: \.self) { Text($0.rawValue) }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 320)
                     }
                     .noToolbarGlass()
                 }
