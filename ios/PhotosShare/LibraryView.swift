@@ -84,7 +84,7 @@ struct LibraryView: View {
         content
             .navigationTitle(summary.name)   // not shown; names the screen for the back button's menu
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .navigationBar, .bottomBar)
             .toolbar {
                 // Only the back button and, on Photos, the Years / Months / All Photos switch.
                 ToolbarItem(placement: .principal) {
@@ -180,7 +180,7 @@ struct PhotoGrid: View {
             }
         }
         .defaultScrollAnchor(.bottom)      // newest at the bottom, like Photos
-        .noTopFrosting()
+        .noEdgeFrosting()
         .task(id: jump) {
             guard let jump else { return }
             try? await Task.sleep(for: .milliseconds(50))
@@ -365,8 +365,8 @@ extension ToolbarContent {
 }
 
 extension View {
-    /// iOS 26 frosts content scrolled under the top bar; photos should stay clear there.
-    @ViewBuilder func noTopFrosting() -> some View {
-        if #available(iOS 26, *) { self.scrollEdgeEffectHidden(true, for: .top) } else { self }
+    /// iOS 26 frosts content scrolled under the top and bottom bars; photos should stay clear.
+    @ViewBuilder func noEdgeFrosting() -> some View {
+        if #available(iOS 26, *) { self.scrollEdgeEffectHidden(true, for: [.top, .bottom]) } else { self }
     }
 }
