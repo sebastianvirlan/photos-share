@@ -98,6 +98,7 @@ struct LibraryView: View {
                         Color.clear.frame(width: 1, height: 1)
                     }
                 }
+                .noToolbarGlass()
                 if case .ready = model.state {
                     ToolbarItem(placement: .bottomBar) {
                         Picker("Show", selection: $tab) {
@@ -106,6 +107,7 @@ struct LibraryView: View {
                         .pickerStyle(.segmented)
                         .frame(maxWidth: 320)
                     }
+                    .noToolbarGlass()
                 }
             }
             .task { await model.load(app) }
@@ -178,6 +180,7 @@ struct PhotoGrid: View {
             }
         }
         .defaultScrollAnchor(.bottom)      // newest at the bottom, like Photos
+        .noTopFrosting()
         .task(id: jump) {
             guard let jump else { return }
             try? await Task.sleep(for: .milliseconds(50))
@@ -350,5 +353,20 @@ private struct PeopleGrid: View {
                                        description: Text("Name people in Photos on the Mac to see them here."))
             }
         }
+    }
+}
+
+extension ToolbarContent {
+    /// iOS 26 puts toolbar items on a shared glass capsule; a segmented control already has
+    /// its own, and the two together look doubled.
+    @ToolbarContentBuilder func noToolbarGlass() -> some ToolbarContent {
+        if #available(iOS 26, *) { self.sharedBackgroundVisibility(.hidden) } else { self }
+    }
+}
+
+extension View {
+    /// iOS 26 frosts content scrolled under the top bar; photos should stay clear there.
+    @ViewBuilder func noTopFrosting() -> some View {
+        if #available(iOS 26, *) { self.scrollEdgeEffectHidden(true, for: .top) } else { self }
     }
 }

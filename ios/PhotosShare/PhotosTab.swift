@@ -112,6 +112,7 @@ private struct YearsList: View {
             .padding(.horizontal).padding(.vertical, 8)
         }
         .defaultScrollAnchor(.bottom)
+        .noTopFrosting()
     }
 }
 
@@ -141,6 +142,7 @@ private struct MonthsList: View {
                 .padding(.horizontal).padding(.vertical, 8)
             }
             .defaultScrollAnchor(.bottom)
+        .noTopFrosting()
             .task(id: jump) {
                 guard let jump else { return }
                 try? await Task.sleep(for: .milliseconds(50))
