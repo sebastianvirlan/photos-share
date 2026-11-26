@@ -24,6 +24,7 @@ final class LibraryModel {
                 switch try await api.library(id) {
                 case .ready(let d):
                     apply(d)
+                    if let f = DebugLaunch.filter.flatMap(Filter.init(rawValue:)) { filter = f }
                     state = .ready
                     return
                 case .opening:
@@ -52,7 +53,39 @@ final class LibraryModel {
         photos = all.filter { !$0.isHidden }
         hidden = all.filter(\.isHidden)
         byUUID = Dictionary(d.assets.map { ($0.u, $0) }, uniquingKeysWith: { a, _ in a })
-        months = MonthGroup.group(photos)
+        regroup()
+    }
+
+    enum Filter: String, CaseIterable {
+        case all = "All Items", favorites = "Favourites", photos = "Photos", videos = "Videos", live = "Live Photos"
+        var symbol: String {
+            switch self {
+            case .all: "photo.on.rectangle"
+            case .favorites: "heart"
+            case .photos: "photo"
+            case .videos: "video"
+            case .live: "livephoto"
+            }
+        }
+        func keeps(_ a: Asset) -> Bool {
+            switch self {
+            case .all: true
+            case .favorites: a.isFavorite
+            case .photos: !a.isVideo
+            case .videos: a.isVideo
+            case .live: a.isLive && !a.isVideo
+            }
+        }
+    }
+
+    /// What the Photos tab shows (Years, Months and All Photos alike).
+    var filter: Filter = .all { didSet { if filter != oldValue { regroup() } } }
+    /// `photos` after the filter.
+    var shown: [Asset] = []
+
+    private func regroup() {
+        shown = filter == .all ? photos : photos.filter(filter.keeps)
+        months = MonthGroup.group(shown)
         years = Dictionary(grouping: months, by: \.year).map { YearGroup(year: $0.key, months: $0.value) }
             .sorted { $0.year < $1.year }
     }
@@ -95,6 +128,21 @@ struct LibraryView: View {
                     }
                 }
                 .noToolbarGlass()
+                if case .ready = model.state, tab == .photos, !model.photos.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Picker("Show", selection: $model.filter) {
+                                ForEach(LibraryModel.Filter.allCases, id: \.self) {
+                                    Label($0.rawValue, systemImage: $0.symbol)
+                                }
+                            }
+                        } label: {
+                            Image(systemName: model.filter == .all
+                                  ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill")
+                        }
+                        .accessibilityLabel("Filter")
+                    }
+                }
                 if case .ready = model.state {
                     ToolbarItem(placement: .bottomBar) {
                         GlassSwitcher(options: Tab.allCases.map { ($0, $0.rawValue) }, selection: $tab)
@@ -194,7 +242,7 @@ struct PhotoGrid: View {
         }
         .overlay {
             if assets.isEmpty {
-                ContentUnavailableView("No photos", systemImage: "photo")
+                ContentUnavailableView("Nothing here", systemImage: "photo")
             }
         }
         .simultaneousGesture(MagnifyGesture().onEnded { v in

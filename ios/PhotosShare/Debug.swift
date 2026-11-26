@@ -21,6 +21,8 @@ enum DebugLaunch {
     static var tab: String? { env["PS_TAB"] }
     /// years | months | all
     static var zoom: String? { env["PS_ZOOM"] }
+    /// e.g. "Videos"
+    static var filter: String? { env["PS_FILTER"] }
     /// Opens the viewer on the Nth newest item (0 = newest).
     static var openItem: Int? { env["PS_OPEN"].flatMap(Int.init) }
     /// Saves the opened item to Photos straight away.
@@ -30,6 +32,7 @@ enum DebugLaunch {
     static let openLibrary = false
     static let tab: String? = nil
     static let zoom: String? = nil
+    static let filter: String? = nil
     static let openItem: Int? = nil
     static let save = false
     #endif

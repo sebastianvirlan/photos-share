@@ -81,7 +81,7 @@ struct PhotosTab: View {
                     withAnimation { zoom = .all }
                 }
             case .all:
-                PhotoGrid(libraryID: model.id, assets: model.photos,
+                PhotoGrid(libraryID: model.id, assets: model.shown,
                           downloads: model.detail?.downloads ?? false, jump: photoJump)
             }
         }
