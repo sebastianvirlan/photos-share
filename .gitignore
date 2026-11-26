@@ -9,3 +9,4 @@ import-test-*.txt
 ios/**/xcuserdata/
 ios/**/*.xcworkspace/xcuserdata/
 ios/build/
+ios/dist/
