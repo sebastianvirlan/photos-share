@@ -56,6 +56,7 @@ struct ViewerView: View {
             }
         }
         .statusBarHidden(!chrome)
+        .task { if DebugLaunch.save { act(share: false) } }
         .sheet(isPresented: Binding(get: { sharing != nil }, set: { if !$0 { sharing = nil } })) {
             if let sharing { ShareSheet(items: sharing).presentationDetents([.medium, .large]) }
         }

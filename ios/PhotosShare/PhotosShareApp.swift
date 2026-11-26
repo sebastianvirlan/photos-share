@@ -14,6 +14,13 @@ struct PhotosShareApp: App {
                 }
             }
             .environment(app)
+            .task {
+                guard let (address, password) = DebugLaunch.connect else { return }
+                app.disconnect()
+                if let (base, needs) = try? await app.probe(address) {
+                    try? await app.connect(base: base, password: needs ? password : nil)
+                }
+            }
         }
     }
 }

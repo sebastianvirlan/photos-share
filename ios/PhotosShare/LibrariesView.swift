@@ -5,9 +5,10 @@ struct LibrariesView: View {
     @State private var libraries: [LibrarySummary] = []
     @State private var loaded = false
     @State private var error: String?
+    @State private var path: [LibrarySummary] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if let error, libraries.isEmpty {
                     ContentUnavailableView {
@@ -52,6 +53,7 @@ struct LibrariesView: View {
         do {
             libraries = try await api.libraries()
             error = nil
+            if DebugLaunch.openLibrary, path.isEmpty, let first = libraries.first { path = [first] }
         } catch APIError.needsPassword {
             app.signedOut()
         } catch {

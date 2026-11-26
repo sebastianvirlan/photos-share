@@ -70,6 +70,7 @@ struct LibraryView: View {
     init(summary: LibrarySummary) {
         self.summary = summary
         _model = State(initialValue: LibraryModel(id: summary.id))
+        _tab = State(initialValue: DebugLaunch.tab.flatMap { t in Tab.allCases.first { $0.rawValue.lowercased() == t } } ?? .photos)
     }
 
     var body: some View {
@@ -148,6 +149,12 @@ struct PhotoGrid: View {
             }
         }
         .defaultScrollAnchor(.bottom)      // newest at the bottom, like Photos
+        .task {
+            if let n = DebugLaunch.openItem, open == nil, assets.indices.contains(assets.count - 1 - n) {
+                try? await Task.sleep(for: .seconds(1))
+                open = assets.count - 1 - n
+            }
+        }
         .overlay {
             if assets.isEmpty {
                 ContentUnavailableView("No photos", systemImage: "photo")
