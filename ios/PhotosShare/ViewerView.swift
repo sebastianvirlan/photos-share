@@ -12,7 +12,8 @@ struct ViewerView: View {
 
     /// The item on screen; shared with the grid, so closing zooms back into the right tile.
     @Binding var current: String?
-    @State private var chrome = true
+    // Opens showing only the photo; a tap shows the date, Share and Save.
+    @State private var chrome = false
     @State private var playingLive = false
     @State private var saving = false
     @State private var message: String?
