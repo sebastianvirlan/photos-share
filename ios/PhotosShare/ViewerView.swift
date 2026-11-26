@@ -168,20 +168,25 @@ private struct ZoomablePhoto: View {
     let libraryID: String
     let asset: Asset
     @State private var image: UIImage?
+    @Environment(\.displayScale) private var scale
 
     var body: some View {
-        ZoomView(image: image)
-            .task(id: asset.id) {
-                let thumb = api.thumbURL(libraryID, asset.u)
-                image = ImageLoader.shared.cached(thumb, maxPixels: 360)
-                if image == nil { image = await ImageLoader.shared.image(api, thumb, maxPixels: 640) }
-                let scale = UIScreen.main.scale
-                let px = max(UIScreen.main.bounds.width, UIScreen.main.bounds.height) * scale
-                if let full = await ImageLoader.shared.image(api, api.photoURL(libraryID, asset.u),
-                                                             maxPixels: min(px * 2, 4096)) {
-                    image = full
-                }
-            }
+        GeometryReader { geo in
+            ZoomView(image: image)
+                .task(id: asset.id) { await load(longSide: max(geo.size.width, geo.size.height)) }
+        }
+    }
+
+    private func load(longSide: CGFloat) async {
+        let thumb = api.thumbURL(libraryID, asset.u)
+        image = ImageLoader.shared.cached(thumb, maxPixels: 360)
+        if image == nil { image = await ImageLoader.shared.image(api, thumb, maxPixels: 640) }
+        // Twice the screen's pixels, so zooming in stays sharp for a while.
+        let px = longSide * scale
+        if let full = await ImageLoader.shared.image(api, api.photoURL(libraryID, asset.u),
+                                                     maxPixels: min(px * 2, 4096)) {
+            image = full
+        }
     }
 }
 
@@ -237,7 +242,7 @@ final class ZoomingScrollView: UIScrollView, UIScrollViewDelegate {
         // Up to the photo's own pixels, and at least 3×, so small photos still zoom.
         let fit = min(bounds.width / max(size.width, 1), bounds.height / max(size.height, 1))
         minimumZoomScale = 1
-        maximumZoomScale = max(3, 1 / max(fit, 0.0001) / UIScreen.main.scale * 2)
+        maximumZoomScale = max(3, 1 / max(fit, 0.0001) / traitCollection.displayScale * 2)
     }
 
     private func centre() {

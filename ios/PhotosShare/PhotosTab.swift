@@ -85,6 +85,8 @@ struct PhotosTab: View {
                           downloads: model.detail?.downloads ?? false, jump: photoJump)
             }
         }
+        // Soft: the frosting under the top bar fades out downwards, as in Photos.
+        .scrollEdgeEffectStyle(.soft, for: .top)
         // Picking from the switch at the top starts that view at its newest end.
         .onChange(of: zoom) {
             if !fromCard { monthJump = nil; photoJump = nil }
