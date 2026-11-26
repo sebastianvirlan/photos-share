@@ -2,9 +2,10 @@
 # Builds the iPhone/iPad app into an .ipa in ios/dist/.
 #
 #   scripts/build-ipa.sh --team ABCDE12345 [--method release-testing]
-#   scripts/build-ipa.sh                     (no team: unsigned .ipa, for checking the build only)
+#   scripts/build-ipa.sh                     (finds the team on this Mac; none: unsigned .ipa)
 #
-# --team    Your Apple Developer Team ID (developer.apple.com → Membership). Xcode must be signed
+# --team    Your Apple Developer Team ID. Optional when this Mac knows exactly one team (from its
+#           signing certificates or Xcode → Settings → Accounts). Xcode must be signed
 #           in to that account (Xcode → Settings → Accounts); signing is automatic.
 # --method  How the .ipa will be installed:
 #             release-testing    (default) Ad Hoc: devices registered in your account
@@ -20,10 +21,45 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --team) team=$2; shift 2 ;;
     --method) method=$2; shift 2 ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
+
+# Team IDs this Mac can sign for: from Apple signing certificates in the keychain (their
+# "OU" is the team), and from the accounts added in Xcode → Settings → Accounts.
+find_teams() {
+  local name
+  # Each signing identity's certificate: its subject's OU is the team ID.
+  security find-identity -v -p codesigning 2>/dev/null \
+    | grep -oE '"(Apple|iPhone) (Development|Distribution)[^"]*"' | tr -d '"' | sort -u \
+    | while IFS= read -r name; do
+        security find-certificate -c "$name" -p 2>/dev/null | team_of_cert
+      done
+  # Teams of the accounts added in Xcode (the key's name differs between Xcode versions).
+  for key in IDEProvisioningTeamByIdentifier IDEProvisioningTeams; do
+    defaults read com.apple.dt.Xcode "$key" 2>/dev/null | team_ids_in_xcode_prefs
+  done
+}
+team_of_cert() {
+  openssl x509 -noout -subject -nameopt multiline 2>/dev/null | awk -F' = ' '/organizationalUnitName/ {print $2}'
+}
+team_ids_in_xcode_prefs() {
+  grep -oE 'teamID = "?[A-Z0-9]{10}"?' | grep -oE '[A-Z0-9]{10}'
+}
+
+if [[ -z $team ]]; then
+  # "|| true": finding nothing isn't an error (grep reports no match as a failure).
+  teams=(${(f)"$(find_teams 2>/dev/null | sort -u || true)"})
+  if (( ${#teams} == 1 )); then
+    team=$teams[1]
+    echo "Using team $team (found on this Mac)."
+  elif (( ${#teams} > 1 )); then
+    echo "This Mac can sign for several teams: ${teams[*]}" >&2
+    echo "Pick one: scripts/build-ipa.sh --team <ID>" >&2
+    exit 2
+  fi
+fi
 
 root=${0:A:h:h}/ios
 dist=$root/dist
