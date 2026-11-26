@@ -3,6 +3,7 @@
 #
 #   scripts/build-ipa.sh --team ABCDE12345 [--method release-testing]
 #   scripts/build-ipa.sh                     (finds the team on this Mac; none: unsigned .ipa)
+#   scripts/build-ipa.sh --unsigned          (just the .ipa, unsigned: for tools that sign it themselves)
 #
 # --team    Your Apple Developer Team ID. Optional when this Mac knows exactly one team (from its
 #           signing certificates or Xcode → Settings → Accounts). Xcode must be signed
@@ -17,11 +18,13 @@ set -euo pipefail
 
 team=""
 method="release-testing"
+unsigned=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     --team) team=$2; shift 2 ;;
     --method) method=$2; shift 2 ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    --unsigned) unsigned=true; shift ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -48,7 +51,7 @@ team_ids_in_xcode_prefs() {
   grep -oE 'teamID = "?[A-Z0-9]{10}"?' | grep -oE '[A-Z0-9]{10}'
 }
 
-if [[ -z $team ]]; then
+if [[ -z $team ]] && ! $unsigned; then
   # "|| true": finding nothing isn't an error (grep reports no match as a failure).
   teams=(${(f)"$(find_teams 2>/dev/null | sort -u || true)"})
   if (( ${#teams} == 1 )); then
@@ -71,7 +74,7 @@ export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer
 rm -rf "$build" && mkdir -p "$build" "$dist"
 cd "$root"
 
-if [[ -n $team ]]; then
+if [[ -n $team ]] && ! $unsigned; then
   echo "Archiving (signed for team $team)…"
   xcodebuild -project PhotosShare.xcodeproj -scheme PhotosShare -configuration Release \
     -destination 'generic/platform=iOS' -archivePath "$archive" \
@@ -95,7 +98,7 @@ EOF
   out="$dist/Photos Share.ipa"
   mv "$ipa" "$out"
 else
-  echo "No --team given: building an UNSIGNED .ipa (can't be installed as it is)."
+  echo "Building an UNSIGNED .ipa (a sideloading tool signs it; can't be installed as it is)."
   xcodebuild -project PhotosShare.xcodeproj -scheme PhotosShare -configuration Release \
     -destination 'generic/platform=iOS' -archivePath "$archive" \
     CODE_SIGNING_ALLOWED=NO archive -quiet
