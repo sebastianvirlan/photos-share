@@ -57,6 +57,7 @@ struct ViewerView: View {
             }
         }
         .statusBarHidden(!chrome)
+        .accessibilityAction(.escape) { dismiss() }   // VoiceOver's close gesture; swipe down otherwise
         .task { if DebugLaunch.save { act(share: false) } }
         .sheet(isPresented: Binding(get: { sharing != nil }, set: { if !$0 { sharing = nil } })) {
             if let sharing { ShareSheet(items: sharing).presentationDetents([.medium, .large]) }
@@ -75,11 +76,6 @@ struct ViewerView: View {
                 }
             }
             Spacer()
-            Button { dismiss() } label: {
-                Image(systemName: "xmark").font(.body.weight(.semibold)).padding(10)
-                    .background(.regularMaterial, in: Circle())
-            }
-            .accessibilityLabel("Close")
         }
         .padding(.horizontal).padding(.vertical, 8)
         .background(.bar)

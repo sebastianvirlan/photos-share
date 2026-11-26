@@ -54,9 +54,11 @@ struct YearGroup: Identifiable, Hashable {
 /// Photos the way the Photos app shows them: Years, Months, or every photo.
 struct PhotosTab: View {
     let model: LibraryModel
-    @State private var zoom: Zoom = Zoom(rawValue: DebugLaunch.zoom ?? "") ?? .all
+    @Binding var zoom: Zoom
     @State private var monthJump: String?
     @State private var photoJump: String?
+    /// Set when a year or month card changes the view, rather than the switch at the top.
+    @State private var fromCard = false
 
     enum Zoom: String, CaseIterable {
         case years, months, all
@@ -69,11 +71,13 @@ struct PhotosTab: View {
             case .years:
                 YearsList(model: model) { year in
                     monthJump = year.months.first?.id
+                    fromCard = true
                     withAnimation { zoom = .months }
                 }
             case .months:
                 MonthsList(model: model, jump: monthJump) { month in
                     photoJump = month.first.id
+                    fromCard = true
                     withAnimation { zoom = .all }
                 }
             case .all:
@@ -81,20 +85,10 @@ struct PhotosTab: View {
                           downloads: model.detail?.downloads ?? false, jump: photoJump)
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            if !model.photos.isEmpty {
-                Picker("Group by", selection: Binding(get: { zoom }, set: { z in
-                    monthJump = nil; photoJump = nil
-                    withAnimation { zoom = z }
-                })) {
-                    ForEach(Zoom.allCases, id: \.self) { Text($0.title) }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 300)
-                .padding(4)
-                .background(.regularMaterial, in: Capsule())
-                .padding(.bottom, 6)
-            }
+        // Picking from the switch at the top starts that view at its newest end.
+        .onChange(of: zoom) {
+            if !fromCard { monthJump = nil; photoJump = nil }
+            fromCard = false
         }
     }
 }

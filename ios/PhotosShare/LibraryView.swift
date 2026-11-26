@@ -70,6 +70,7 @@ struct LibraryView: View {
     let summary: LibrarySummary
     @State private var model: LibraryModel
     @State private var tab: Tab = .photos
+    @State private var zoom: PhotosTab.Zoom = PhotosTab.Zoom(rawValue: DebugLaunch.zoom ?? "") ?? .all
 
     enum Tab: String, CaseIterable { case photos = "Photos", albums = "Albums", people = "People" }
 
@@ -81,9 +82,22 @@ struct LibraryView: View {
 
     var body: some View {
         content
-            .navigationTitle(summary.name)
+            .navigationTitle(summary.name)   // not shown; names the screen for the back button's menu
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
+                // Only the back button and, on Photos, the Years / Months / All Photos switch.
+                ToolbarItem(placement: .principal) {
+                    if case .ready = model.state, tab == .photos, !model.photos.isEmpty {
+                        Picker("Group by", selection: $zoom) {
+                            ForEach(PhotosTab.Zoom.allCases, id: \.self) { Text($0.title) }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 260)
+                    } else {
+                        Color.clear.frame(width: 1, height: 1)
+                    }
+                }
                 if case .ready = model.state {
                     ToolbarItem(placement: .bottomBar) {
                         Picker("Show", selection: $tab) {
@@ -122,7 +136,7 @@ struct LibraryView: View {
         case .ready:
             switch tab {
             case .photos:
-                PhotosTab(model: model)
+                PhotosTab(model: model, zoom: $zoom)
             case .albums:
                 AlbumsGrid(model: model)
             case .people:
