@@ -10,18 +10,19 @@ struct ViewerView: View {
     let assets: [Asset]
     let downloads: Bool
 
-    @State private var current: String?
+    /// The item on screen; shared with the grid, so closing zooms back into the right tile.
+    @Binding var current: String?
     @State private var chrome = true
     @State private var playingLive = false
     @State private var saving = false
     @State private var message: String?
     @State private var sharing: [URL]?
 
-    init(libraryID: String, assets: [Asset], start: Int, downloads: Bool) {
+    init(libraryID: String, assets: [Asset], current: Binding<String?>, downloads: Bool) {
         self.libraryID = libraryID
         self.assets = assets
         self.downloads = downloads
-        _current = State(initialValue: assets.indices.contains(start) ? assets[start].id : nil)
+        _current = current
     }
 
     private var asset: Asset? { assets.first { $0.id == current } }

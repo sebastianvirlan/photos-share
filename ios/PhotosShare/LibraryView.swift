@@ -11,6 +11,9 @@ final class LibraryModel {
     var photos: [Asset] = []
     var hidden: [Asset] = []
     var byUUID: [String: Asset] = [:]
+    /// `photos` by month and by year, oldest first.
+    var months: [MonthGroup] = []
+    var years: [YearGroup] = []
 
     init(id: String) { self.id = id }
 
@@ -49,6 +52,9 @@ final class LibraryModel {
         photos = all.filter { !$0.isHidden }
         hidden = all.filter(\.isHidden)
         byUUID = Dictionary(d.assets.map { ($0.u, $0) }, uniquingKeysWith: { a, _ in a })
+        months = MonthGroup.group(photos)
+        years = Dictionary(grouping: months, by: \.year).map { YearGroup(year: $0.key, months: $0.value) }
+            .sorted { $0.year < $1.year }
     }
 
     func assets(of album: Album) -> [Asset] { album.uuids.compactMap { byUUID[$0] } }
@@ -116,7 +122,7 @@ struct LibraryView: View {
         case .ready:
             switch tab {
             case .photos:
-                PhotoGrid(libraryID: model.id, assets: model.photos, downloads: model.detail?.downloads ?? false)
+                PhotosTab(model: model)
             case .albums:
                 AlbumsGrid(model: model)
             case .people:
@@ -133,15 +139,24 @@ struct PhotoGrid: View {
     let libraryID: String
     let assets: [Asset]
     let downloads: Bool
-    @State private var open: Int?
+    /// An item to bring into view (the first of the month picked in Months).
+    var jump: String? = nil
+    @State private var open: Opened?
+    /// The item shown in the viewer, kept in step as you swipe there.
+    @State private var viewing: String?
     @State private var columns = 3
+    @Namespace private var zoom
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: columns), spacing: 2) {
                 ForEach(Array(assets.enumerated()), id: \.element.id) { i, a in
-                    Button { open = i } label: { Tile(libraryID: libraryID, asset: a) }
-                        .buttonStyle(.plain)
+                    Button { viewing = a.id; open = Opened(index: i) } label: {
+                        Tile(libraryID: libraryID, asset: a)
+                    }
+                    .buttonStyle(.plain)
+                    .matchedTransitionSource(id: a.id, in: zoom)
                 }
             }
             if !assets.isEmpty {
@@ -149,10 +164,23 @@ struct PhotoGrid: View {
             }
         }
         .defaultScrollAnchor(.bottom)      // newest at the bottom, like Photos
+        .task(id: jump) {
+            guard let jump else { return }
+            try? await Task.sleep(for: .milliseconds(50))
+            proxy.scrollTo(jump, anchor: .top)
+        }
+        // Swiping in the viewer moves the grid along underneath, so closing zooms back into
+        // a tile that's on screen.
+        .onChange(of: viewing) { _, id in
+            if open != nil, let id { proxy.scrollTo(id, anchor: .center) }
+        }
+        }
         .task {
-            if let n = DebugLaunch.openItem, open == nil, assets.indices.contains(assets.count - 1 - n) {
+            let i = assets.count - 1 - (DebugLaunch.openItem ?? -1)
+            if DebugLaunch.openItem != nil, open == nil, assets.indices.contains(i) {
                 try? await Task.sleep(for: .seconds(1))
-                open = assets.count - 1 - n
+                viewing = assets[i].id
+                open = Opened(index: i)
             }
         }
         .overlay {
@@ -164,8 +192,10 @@ struct PhotoGrid: View {
             let next = v.magnification > 1 ? columns - 1 : columns + 1
             withAnimation { columns = min(max(next, 1), 7) }
         })
-        .fullScreenCover(item: Binding(get: { open.map(Opened.init) }, set: { open = $0?.index })) { o in
-            ViewerView(libraryID: libraryID, assets: assets, start: o.index, downloads: downloads)
+        // Opens like Photos: the photo zooms out of its tile, and a swipe down sends it back.
+        .fullScreenCover(item: $open) { _ in
+            ViewerView(libraryID: libraryID, assets: assets, current: $viewing, downloads: downloads)
+                .navigationTransition(.zoom(sourceID: viewing ?? "", in: zoom))
         }
     }
 
