@@ -53,8 +53,8 @@ struct YearGroup: Identifiable, Hashable {
 
 /// Photos the way the Photos app shows them: Years, Months, or every photo.
 struct PhotosTab: View {
-    let model: LibraryModel
-    @Binding var zoom: Zoom
+    @Bindable var model: LibraryModel
+    @State private var zoom: Zoom = Zoom(rawValue: DebugLaunch.zoom ?? "") ?? .all
     @State private var monthJump: String?
     @State private var photoJump: String?
     /// Set when a year or month card changes the view, rather than the switch at the top.
@@ -63,6 +63,15 @@ struct PhotosTab: View {
     enum Zoom: String, CaseIterable {
         case years, months, all
         var title: String { self == .all ? "All Photos" : rawValue.capitalized }
+    }
+
+    private var groupPicker: some View {
+        Picker("Group by", selection: $zoom) {
+            ForEach(Zoom.allCases, id: \.self) { Text($0.title) }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal)
+        .padding(.bottom, 8)
     }
 
     var body: some View {
@@ -90,6 +99,21 @@ struct PhotosTab: View {
             if !fromCard { monthJump = nil; photoJump = nil }
             fromCard = false
         }
+        .groupingBar { if !model.photos.isEmpty { groupPicker } }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Picker("Show", selection: $model.filter) {
+                        ForEach(LibraryModel.Filter.allCases, id: \.self) {
+                            Label($0.rawValue, systemImage: $0.symbol)
+                        }
+                    }
+                } label: {
+                    Label("Filter", systemImage: model.filter == .all
+                          ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill")
+                }
+            }
+        }
     }
 }
 
@@ -112,7 +136,6 @@ private struct YearsList: View {
             .padding(.horizontal).padding(.vertical, 8)
         }
         .defaultScrollAnchor(.bottom)
-        .noEdgeFrosting()
     }
 }
 
@@ -142,7 +165,6 @@ private struct MonthsList: View {
                 .padding(.horizontal).padding(.vertical, 8)
             }
             .defaultScrollAnchor(.bottom)
-        .noEdgeFrosting()
             .task(id: jump) {
                 guard let jump else { return }
                 try? await Task.sleep(for: .milliseconds(50))
@@ -180,3 +202,15 @@ private struct DateCard: View {
 }
 
 func itemCount(_ n: Int) -> String { n == 1 ? "1 item" : "\(n.formatted()) items" }
+
+private extension View {
+    /// A bar under the navigation bar. On iOS 26 `safeAreaBar` makes the scroll edge effect
+    /// cover it too, so it stays readable over photos; earlier versions inset the content.
+    @ViewBuilder func groupingBar<Bar: View>(@ViewBuilder _ bar: () -> Bar) -> some View {
+        if #available(iOS 26, *) {
+            safeAreaBar(edge: .top, content: bar)
+        } else {
+            safeAreaInset(edge: .top, content: bar)
+        }
+    }
+}

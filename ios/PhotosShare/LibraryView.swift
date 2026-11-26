@@ -98,104 +98,6 @@ final class LibraryModel {
     }
 }
 
-struct LibraryView: View {
-    @Environment(AppModel.self) private var app
-    let summary: LibrarySummary
-    @State private var model: LibraryModel
-    @State private var tab: Tab = .photos
-    @State private var zoom: PhotosTab.Zoom = PhotosTab.Zoom(rawValue: DebugLaunch.zoom ?? "") ?? .all
-
-    enum Tab: String, CaseIterable { case photos = "Photos", albums = "Albums", people = "People" }
-
-    init(summary: LibrarySummary) {
-        self.summary = summary
-        _model = State(initialValue: LibraryModel(id: summary.id))
-        _tab = State(initialValue: DebugLaunch.tab.flatMap { t in Tab.allCases.first { $0.rawValue.lowercased() == t } } ?? .photos)
-    }
-
-    var body: some View {
-        content
-            .navigationTitle(summary.name)   // not shown; names the screen for the back button's menu
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar, .bottomBar)
-            .toolbar {
-                // Only the back button and, on Photos, the Years / Months / All Photos switch.
-                ToolbarItem(placement: .principal) {
-                    if case .ready = model.state, tab == .photos, !model.photos.isEmpty {
-                        Picker("Group by", selection: $zoom) {
-                            ForEach(PhotosTab.Zoom.allCases, id: \.self) { Text($0.title) }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 260)
-                    } else {
-                        Color.clear.frame(width: 1, height: 1)
-                    }
-                }
-                .noToolbarGlass()
-                if case .ready = model.state, tab == .photos, !model.photos.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Picker("Show", selection: $model.filter) {
-                                ForEach(LibraryModel.Filter.allCases, id: \.self) {
-                                    Label($0.rawValue, systemImage: $0.symbol)
-                                }
-                            }
-                        } label: {
-                            Image(systemName: model.filter == .all
-                                  ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill")
-                        }
-                        .accessibilityLabel("Filter")
-                    }
-                }
-                if case .ready = model.state {
-                    ToolbarItem(placement: .bottomBar) {
-                        Picker("Show", selection: $tab) {
-                            ForEach(Tab.allCases, id: \.self) { Text($0.rawValue) }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 320)
-                    }
-                    .noToolbarGlass()
-                }
-            }
-            .task { await model.load(app) }
-            .refreshable { await model.load(app) }
-    }
-
-    @ViewBuilder private var content: some View {
-        switch model.state {
-        case .loading:
-            ProgressView()
-        case .opening:
-            VStack(spacing: 12) {
-                ProgressView()
-                Text("The Mac is opening this library…").foregroundStyle(.secondary)
-                Text("Big libraries take a minute the first time.").font(.footnote).foregroundStyle(.tertiary)
-            }
-        case .unavailable:
-            ContentUnavailableView("Library not available", systemImage: "externaldrive.badge.xmark",
-                                   description: Text("Its drive may be unplugged from the Mac."))
-        case .failed(let message):
-            ContentUnavailableView {
-                Label("Couldn’t open", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(message)
-            } actions: {
-                Button("Try Again") { Task { await model.load(app) } }
-            }
-        case .ready:
-            switch tab {
-            case .photos:
-                PhotosTab(model: model, zoom: $zoom)
-            case .albums:
-                AlbumsGrid(model: model)
-            case .people:
-                PeopleGrid(model: model)
-            }
-        }
-    }
-}
-
 // MARK: - Photo grid
 
 struct PhotoGrid: View {
@@ -228,7 +130,6 @@ struct PhotoGrid: View {
             }
         }
         .defaultScrollAnchor(.bottom)      // newest at the bottom, like Photos
-        .noEdgeFrosting()
         .task(id: jump) {
             guard let jump else { return }
             try? await Task.sleep(for: .milliseconds(50))
@@ -301,7 +202,7 @@ private struct Tile: View {
 
 // MARK: - Albums and people
 
-private struct AlbumsGrid: View {
+struct AlbumsGrid: View {
     @Environment(AppModel.self) private var app
     let model: LibraryModel
 
@@ -366,7 +267,7 @@ private struct AlbumCell: View {
     }
 }
 
-private struct PeopleGrid: View {
+struct PeopleGrid: View {
     @Environment(AppModel.self) private var app
     let model: LibraryModel
 
@@ -401,20 +302,5 @@ private struct PeopleGrid: View {
                                        description: Text("Name people in Photos on the Mac to see them here."))
             }
         }
-    }
-}
-
-extension ToolbarContent {
-    /// iOS 26 puts toolbar items on a shared glass capsule; a segmented control already has
-    /// its own, and the two together look doubled.
-    @ToolbarContentBuilder func noToolbarGlass() -> some ToolbarContent {
-        if #available(iOS 26, *) { self.sharedBackgroundVisibility(.hidden) } else { self }
-    }
-}
-
-extension View {
-    /// iOS 26 frosts content scrolled under the top and bottom bars; photos should stay clear.
-    @ViewBuilder func noEdgeFrosting() -> some View {
-        if #available(iOS 26, *) { self.scrollEdgeEffectHidden(true, for: [.top, .bottom]) } else { self }
     }
 }

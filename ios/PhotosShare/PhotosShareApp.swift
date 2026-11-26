@@ -8,7 +8,7 @@ struct PhotosShareApp: App {
         WindowGroup {
             Group {
                 if app.api != nil {
-                    LibrariesView()
+                    LibraryRoot()
                 } else {
                     ConnectView()
                 }
