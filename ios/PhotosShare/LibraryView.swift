@@ -15,7 +15,22 @@ final class LibraryModel {
     var months: [MonthGroup] = []
     var years: [YearGroup] = []
 
+    /// The Mac has re-indexed the library since it was loaded (photos were added in Photos).
+    var updateAvailable = false
+
     init(id: String) { self.id = id }
+
+    /// Like the website: ask the Mac every minute whether the library changed, and offer to
+    /// show the new photos rather than reloading under the viewer. Ends when cancelled.
+    func watch(_ app: AppModel) async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(DebugLaunch.pollSeconds ?? 60))
+            guard !updateAvailable, let api = app.api, let loaded = detail?.rev else { continue }
+            if let me = try? await api.libraries().first(where: { $0.id == id }), me.rev > loaded {
+                updateAvailable = true
+            }
+        }
+    }
 
     func load(_ app: AppModel) async {
         guard let api = app.api else { return }
@@ -24,6 +39,7 @@ final class LibraryModel {
                 switch try await api.library(id) {
                 case .ready(let d):
                     apply(d)
+                    updateAvailable = false
                     if let f = DebugLaunch.filter.flatMap(Filter.init(rawValue:)) { filter = f }
                     state = .ready
                     return

@@ -23,6 +23,8 @@ enum DebugLaunch {
     static var hidden: Bool { env["PS_HIDDEN"] != nil }
     /// years | months | all
     static var zoom: String? { env["PS_ZOOM"] }
+    /// Seconds between update checks (60 normally).
+    static var pollSeconds: Double? { env["PS_POLL"].flatMap(Double.init) }
     /// e.g. "Videos"
     static var filter: String? { env["PS_FILTER"] }
     /// Opens the viewer on the Nth newest item (0 = newest).
@@ -35,6 +37,7 @@ enum DebugLaunch {
     static let tab: String? = nil
     static let hidden = false
     static let zoom: String? = nil
+    static let pollSeconds: Double? = nil
     static let filter: String? = nil
     static let openItem: Int? = nil
     static let save = false

@@ -57,7 +57,10 @@ struct LibraryScreen: View {
                 }
             }
         }
-        .task { await model.load(app) }
+        .task {
+            await model.load(app)
+            await model.watch(app)
+        }
     }
 }
 
@@ -91,6 +94,13 @@ private struct LibraryState<Content: View>: View {
         case .ready:
             content()
                 .refreshable { await model.load(app) }
+                .safeAreaInset(edge: .bottom) {
+                    if model.updateAvailable {
+                        Button("New photos · Show") { Task { await model.load(app) } }
+                            .buttonStyle(.glassProminent)
+                            .padding(.bottom, 8)
+                    }
+                }
         }
     }
 }
