@@ -208,7 +208,9 @@ private extension View {
     /// cover it too, so it stays readable over photos; earlier versions inset the content.
     @ViewBuilder func groupingBar<Bar: View>(@ViewBuilder _ bar: () -> Bar) -> some View {
         if #available(iOS 26, *) {
+            // Soft: the frosting fades out downwards, as in Photos.
             safeAreaBar(edge: .top, content: bar)
+                .scrollEdgeEffectStyle(.soft, for: .top)
         } else {
             safeAreaInset(edge: .top, content: bar)
         }
