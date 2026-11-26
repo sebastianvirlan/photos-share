@@ -126,15 +126,23 @@ struct PhotoGrid: View {
     @State private var open: Opened?
     /// The item shown in the viewer, kept in step as you swipe there.
     @State private var viewing: String?
-    /// Smallest tile width: as many tiles fit across as the screen allows (3 on iPhone,
-    /// 6–7 on iPad). Pinching changes it.
-    @State private var tileWidth: CGFloat = 130
     @Namespace private var zoom
+
+    // Pinch to change the number of columns, as in Photos: the grid scales with the fingers,
+    // then settles on the next column step with the photo under the fingers kept in place.
+    /// Chosen column count; nil = the default for the screen width.
+    @State private var columns: Int?
+    @State private var pinchScale: CGFloat = 1
+    @State private var pinchAnchor: UnitPoint = .center
+    @State private var position = ScrollPosition()
+    @State private var scroll = ScrollGeometry?.none
+    private static let spacing: CGFloat = 2
 
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: tileWidth), spacing: 2)], spacing: 2) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Self.spacing), count: columnCount),
+                      spacing: Self.spacing) {
                 ForEach(Array(assets.enumerated()), id: \.element.id) { i, a in
                     Button { viewing = a.id; open = Opened(index: i) } label: {
                         Tile(libraryID: libraryID, asset: a)
@@ -148,6 +156,10 @@ struct PhotoGrid: View {
             }
         }
         .defaultScrollAnchor(.bottom)      // newest at the bottom, like Photos
+        .scrollPosition($position)
+        .onScrollGeometryChange(for: ScrollGeometry.self, of: { $0 }) { _, g in scroll = g }
+        .scaleEffect(pinchScale, anchor: pinchAnchor)
+        .clipped()
         .task(id: jump) {
             guard let jump else { return }
             try? await Task.sleep(for: .milliseconds(50))
@@ -174,14 +186,69 @@ struct PhotoGrid: View {
                 ContentUnavailableView("Nothing here", systemImage: "photo")
             }
         }
-        .simultaneousGesture(MagnifyGesture().onEnded { v in
-            let next = v.magnification > 1 ? tileWidth * 1.4 : tileWidth / 1.4
-            withAnimation { tileWidth = min(max(next, 60), 500) }
-        })
+        .simultaneousGesture(MagnifyGesture()
+            .onChanged { v in
+                pinchAnchor = v.startAnchor
+                pinchScale = min(max(v.magnification, 0.5), 2.5)
+            }
+            .onEnded { v in settle(v.magnification, at: v.startAnchor) })
+        .task {
+            // Debug only: "0.6,0.5,0.5" = pinch in to 0.6 around the centre.
+            guard let p = DebugLaunch.pinch else { return }
+            try? await Task.sleep(for: .seconds(2))
+            settle(p.scale, at: UnitPoint(x: p.x, y: p.y))
+        }
         // Opens like Photos: the photo zooms out of its tile, and a swipe down sends it back.
         .fullScreenCover(item: $open) { _ in
             ViewerView(libraryID: libraryID, assets: assets, current: $viewing, downloads: downloads)
                 .navigationTransition(.zoom(sourceID: viewing ?? "", in: zoom))
+        }
+    }
+
+    /// Column steps that fit the width (tiles at least 40 points), like Photos' 1, 3, 5…
+    private func steps(_ width: CGFloat) -> [Int] {
+        [1, 3, 5, 7, 9, 11, 13].filter { width / CGFloat($0) >= 40 }
+    }
+
+    /// The chosen count, else the step nearest to tiles about 130 points wide (3 on iPhone).
+    private var columnCount: Int {
+        if let columns { return columns }
+        let width = scroll?.containerSize.width ?? 400
+        let ideal = width / 130
+        return steps(width).min { abs(CGFloat($0) - ideal) < abs(CGFloat($1) - ideal) } ?? 3
+    }
+
+    /// Ends a pinch: one column step fewer (pinched out) or more (pinched in), keeping the
+    /// photo that was under the fingers at the same place on screen.
+    private func settle(_ magnification: CGFloat, at anchor: UnitPoint) {
+        guard let g = scroll, !assets.isEmpty else { pinchScale = 1; return }
+        let width = g.containerSize.width, sp = Self.spacing
+        let all = steps(width), current = columnCount
+        let i = all.firstIndex(of: current) ?? all.firstIndex { $0 > current } ?? all.count - 1
+        var next = current
+        if magnification > 1.15, i > 0 { next = all[i - 1] }
+        if magnification < 0.87, i < all.count - 1 { next = all[i + 1] }
+
+        // The photo under the fingers, and where on it they were.
+        let finger = CGPoint(x: anchor.x * width, y: anchor.y * g.containerSize.height)
+        let pitch = (width - sp * CGFloat(current - 1)) / CGFloat(current) + sp
+        // contentOffset counts from the top of the screen, under the navigation bar; the
+        // fingers' position counts from the top of the visible area, below it.
+        let contentY = g.contentOffset.y + g.contentInsets.top + finger.y
+        let row = max(0, floor(contentY / pitch))
+        let fraction = (contentY - row * pitch) / pitch
+        let column = min(CGFloat(current - 1), max(0, floor(finger.x / pitch)))
+        let index = min(Int(row) * current + Int(column), assets.count - 1)
+
+        pinchScale = 1
+        guard next != current else { return }
+        columns = next
+        // Once laid out with the new columns, put that photo back under the fingers.
+        let newPitch = (width - sp * CGFloat(next - 1)) / CGFloat(next) + sp
+        let target = (CGFloat(index / next) + fraction) * newPitch - finger.y
+        Task { @MainActor in
+            await Task.yield()
+            position.scrollTo(y: max(0, target))
         }
     }
 

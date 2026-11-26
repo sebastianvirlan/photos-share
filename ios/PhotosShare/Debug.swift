@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Debug builds only: launch settings that connect and navigate by themselves, so screens can be
@@ -23,6 +24,11 @@ enum DebugLaunch {
     static var hidden: Bool { env["PS_HIDDEN"] != nil }
     /// years | months | all
     static var zoom: String? { env["PS_ZOOM"] }
+    /// A pinch to apply to the grid: "scale,x,y" (x, y from 0 to 1 across the screen).
+    static var pinch: (scale: CGFloat, x: CGFloat, y: CGFloat)? {
+        guard let v = env["PS_PINCH"]?.split(separator: ",").compactMap({ Double($0) }), v.count == 3 else { return nil }
+        return (v[0], v[1], v[2])
+    }
     /// Seconds between update checks (60 normally).
     static var pollSeconds: Double? { env["PS_POLL"].flatMap(Double.init) }
     /// e.g. "Videos"
@@ -37,6 +43,7 @@ enum DebugLaunch {
     static let tab: String? = nil
     static let hidden = false
     static let zoom: String? = nil
+    static let pinch: (scale: CGFloat, x: CGFloat, y: CGFloat)? = nil
     static let pollSeconds: Double? = nil
     static let filter: String? = nil
     static let openItem: Int? = nil
