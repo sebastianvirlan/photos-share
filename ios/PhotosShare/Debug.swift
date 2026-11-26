@@ -19,6 +19,8 @@ enum DebugLaunch {
     }
     nonisolated(unsafe) private static var openedLibrary = false
     static var tab: String? { env["PS_TAB"] }
+    /// Opens the Hidden album from Albums.
+    static var hidden: Bool { env["PS_HIDDEN"] != nil }
     /// years | months | all
     static var zoom: String? { env["PS_ZOOM"] }
     /// e.g. "Videos"
@@ -31,6 +33,7 @@ enum DebugLaunch {
     static let connect: (String, String?)? = nil
     static let openLibrary = false
     static let tab: String? = nil
+    static let hidden = false
     static let zoom: String? = nil
     static let filter: String? = nil
     static let openItem: Int? = nil

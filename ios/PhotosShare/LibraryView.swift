@@ -168,7 +168,8 @@ struct PhotoGrid: View {
     private var summary: String {
         let videos = assets.filter(\.isVideo).count
         let photos = assets.count - videos
-        return [photos > 0 ? "\(photos.formatted()) Photos" : nil, videos > 0 ? "\(videos.formatted()) Videos" : nil]
+        return [photos == 1 ? "1 Photo" : photos > 0 ? "\(photos.formatted()) Photos" : nil,
+                videos == 1 ? "1 Video" : videos > 0 ? "\(videos.formatted()) Videos" : nil]
             .compactMap { $0 }.joined(separator: ", ")
     }
 
@@ -205,6 +206,7 @@ private struct Tile: View {
 struct AlbumsGrid: View {
     @Environment(AppModel.self) private var app
     let model: LibraryModel
+    @State private var debugHidden = DebugLaunch.hidden
 
     var body: some View {
         let albums = model.detail?.albums ?? []
@@ -224,10 +226,7 @@ struct AlbumsGrid: View {
                 }
                 if !model.hidden.isEmpty {
                     NavigationLink {
-                        PhotoGrid(libraryID: model.id, assets: model.hidden,
-                                  downloads: model.detail?.downloads ?? false)
-                            .navigationTitle("Hidden")
-                            .navigationBarTitleDisplayMode(.inline)
+                        HiddenAlbum(model: model)
                     } label: {
                         AlbumCell(title: "Hidden", count: model.hidden.count, cover: nil, symbol: "eye.slash")
                     }
@@ -236,6 +235,7 @@ struct AlbumsGrid: View {
             }
             .padding()
         }
+        .navigationDestination(isPresented: $debugHidden) { HiddenAlbum(model: model) }
         .overlay {
             if albums.isEmpty && model.hidden.isEmpty {
                 ContentUnavailableView("No albums", systemImage: "rectangle.stack")

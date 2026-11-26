@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct PhotosShareApp: App {
     @State private var app = AppModel()
+    @Environment(\.scenePhase) private var phase
 
     var body: some Scene {
         WindowGroup {
@@ -14,6 +15,7 @@ struct PhotosShareApp: App {
                 }
             }
             .environment(app)
+            .onChange(of: phase) { if phase == .background { app.hiddenUnlocked = false } }
             .task {
                 guard let (address, password) = DebugLaunch.connect else { return }
                 app.disconnect()

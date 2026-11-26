@@ -11,6 +11,9 @@ final class AppModel {
 
     private static let addressKey = "serverAddress"
 
+    /// The Hidden album was unlocked with Face ID; locked again when the app goes to the background.
+    var hiddenUnlocked = false
+
     init() {
         if let s = UserDefaults.standard.string(forKey: Self.addressKey), let base = URL(string: s) {
             api = API(base: base, token: Keychain.read(account: base.absoluteString))
