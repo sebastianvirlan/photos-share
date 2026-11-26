@@ -156,7 +156,9 @@ struct PhotoGrid: View {
         // Swiping in the viewer moves the grid along underneath, so closing zooms back into
         // a tile that's on screen.
         .onChange(of: viewing) { _, id in
-            if open != nil, let id { proxy.scrollTo(id, anchor: .center) }
+            // Not for the photo just tapped: its tile is on screen, and moving the grid as
+            // the photo zooms out of it makes the opening jump.
+            if let open, let id, id != assets[open.index].id { proxy.scrollTo(id, anchor: .center) }
         }
         }
         .task {
