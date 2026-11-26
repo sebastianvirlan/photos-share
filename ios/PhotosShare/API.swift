@@ -198,8 +198,12 @@ struct API: Sendable {
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         if code == 200, let token = body?["token"] as? String { return token }
+        // A Mac from before the app login refuses this request like any other ("login
+        // required"), which isn't the same as a wrong password.
+        if code == 401, body?["error"] as? String == "login required" || code == 404 {
+            throw APIError.server("The Mac’s Photos Share is too old for this app. On the Mac: update it (git pull && scripts/build-app.sh), then stop and start sharing.")
+        }
         if code == 401 { throw APIError.wrongPassword }
-        if code == 404 { throw APIError.server("This share has no password, or the Mac runs an older version. Update Photos Share on the Mac.") }
         if let message = body?["error"] as? String { throw APIError.server(message) }
         throw APIError.http(code)
     }
