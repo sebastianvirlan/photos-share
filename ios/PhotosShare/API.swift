@@ -179,6 +179,17 @@ struct API: Sendable {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    /// Where the server really is: Tailscale answers http:// on a public link with a redirect
+    /// to https://, and the login (a POST) wouldn't survive being redirected. So the address
+    /// a first request ends up at is the one to keep.
+    func resolved() async throws -> API {
+        let (_, resp) = try await API.session.data(for: request("/api/info"))
+        guard let final = resp.url, var c = URLComponents(url: final, resolvingAgainstBaseURL: false),
+              final.host() != nil else { return self }
+        c.path = ""; c.query = nil; c.fragment = nil
+        return c.url.map { API(base: $0, token: token) } ?? self
+    }
+
     func info() async throws -> ServerInfo {
         do {
             let info: ServerInfo = try await get("/api/info")

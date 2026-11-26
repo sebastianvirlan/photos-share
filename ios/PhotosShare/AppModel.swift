@@ -21,7 +21,8 @@ final class AppModel {
 
     /// Checks the address; returns whether a password is needed. Throws for anything else.
     func probe(_ typed: String) async throws -> (URL, needsPassword: Bool) {
-        guard let base = API.normalise(typed) else { throw APIError.badAddress }
+        guard let typedBase = API.normalise(typed) else { throw APIError.badAddress }
+        let base = try await API(base: typedBase, token: nil).resolved().base
         do {
             _ = try await API(base: base, token: nil).info()
             return (base, false)
