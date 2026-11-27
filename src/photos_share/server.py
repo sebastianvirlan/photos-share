@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 import logging
 
 from . import media
-from .auth import COOKIE, COOKIE_DAYS, Auth, login_page
+from .auth import COOKIE, COOKIE_DAYS, SECURE_COOKIE, Auth, login_page
 from .library import Asset, Collection, Library
 
 STATIC = Path(__file__).parent / "static"
@@ -68,7 +68,8 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
             bearer = request.headers.get("authorization", "")
             token = bearer[7:] if bearer.lower().startswith("bearer ") else None
             if request.url.path in ("/login", "/logout", "/api/login") or auth.is_authed(
-                    request.cookies.get(COOKIE)) or auth.is_authed(token):
+                    request.cookies.get(auth.cookie_name)) or auth.is_authed(token) \
+                    or auth.is_authed(request.cookies.get(COOKIE)):   # the iPhone app's video player
                 return await call_next(request)
             if request.url.path == "/":
                 return RedirectResponse("/login", status_code=303)
@@ -88,7 +89,7 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
                 await asyncio.sleep(1)  # slow down guessing
                 return HTMLResponse(login_page("Wrong password."), status_code=401)
             resp = RedirectResponse("/", status_code=303)
-            resp.set_cookie(COOKIE, auth.token, max_age=COOKIE_DAYS * 86400, httponly=True,
+            resp.set_cookie(auth.cookie_name, auth.token, max_age=COOKIE_DAYS * 86400, httponly=True,
                             samesite="lax", secure=auth.secure_cookie)
             return resp
 
@@ -114,6 +115,7 @@ def create_app(col: Collection, video_mode: str, downloads: bool = False,
         def logout():
             resp = RedirectResponse("/login", status_code=303)
             resp.delete_cookie(COOKIE)
+            resp.delete_cookie(SECURE_COOKIE, secure=True)
             return resp
 
     @app.get("/api/info")

@@ -14,6 +14,10 @@ from collections import deque
 from .library import CACHE_ROOT
 
 COOKIE = "ps_session"
+# The public (https) link's cookie has its own name. The private link is plain http on the same
+# host name, and browsers won't let an http page replace, or even see, an https-only cookie of
+# the same name: signing in there would silently fail.
+SECURE_COOKIE = "__Secure-ps_session"
 COOKIE_DAYS = 30
 MAX_FAILURES = 10        # failed logins allowed per window, across all clients
 FAILURE_WINDOW = 600     # seconds
@@ -28,6 +32,10 @@ class Auth:
         self._token = hmac.new(_load_key(), self._password, hashlib.sha256).hexdigest()
         self._failures: deque[float] = deque()
         self._lock = threading.Lock()
+
+    @property
+    def cookie_name(self) -> str:
+        return SECURE_COOKIE if self.secure_cookie else COOKIE
 
     def is_authed(self, cookie: str | None) -> bool:
         return bool(cookie) and hmac.compare_digest(cookie, self._token)

@@ -1,7 +1,7 @@
 import pytest
 
 import photos_share.server as server_mod
-from photos_share.auth import COOKIE, MAX_FAILURES, Auth
+from photos_share.auth import COOKIE, MAX_FAILURES, SECURE_COOKIE, Auth
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +44,18 @@ def test_wrong_then_right_password(locked):
 
 def test_secure_cookie_for_public_links(make_client):
     client, _ = make_client(auth=Auth("correct-horse", secure_cookie=True))
-    assert "secure" in login(client, "correct-horse").headers["set-cookie"].lower()
+    cookie = login(client, "correct-horse").headers["set-cookie"]
+    # Its own name, so it can't block the private (http) link's cookie on the same host.
+    assert cookie.startswith(f"{SECURE_COOKIE}=") and "secure" in cookie.lower()
+
+
+def test_public_link_accepts_its_cookie_and_the_apps(make_client):
+    auth = Auth("correct-horse", secure_cookie=True)
+    client, _ = make_client(auth=auth)
+    for name in (SECURE_COOKIE, COOKIE):    # browser, iPhone app's video player
+        client.cookies.clear()
+        client.cookies.set(name, auth.token)
+        assert client.get("/api/libraries").status_code == 200
 
 
 def test_lockout_after_repeated_failures(locked):
