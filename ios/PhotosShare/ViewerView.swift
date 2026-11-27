@@ -29,20 +29,8 @@ struct ViewerView: View {
     private var asset: Asset? { assets.first { $0.id == current } }
 
     var body: some View {
-        ScrollView(.horizontal) {
-            LazyHStack(spacing: 0) {
-                ForEach(assets) { a in
-                    Page(libraryID: libraryID, asset: a, isCurrent: a.id == current,
-                         playingLive: a.id == current && playingLive)
-                        .containerRelativeFrame([.horizontal, .vertical])
-                        .id(a.id)
-                }
-            }
-            .scrollTargetLayout()
-        }
-        .scrollTargetBehavior(.paging)
-        .scrollPosition(id: $current)
-        .scrollIndicators(.hidden)
+        PhotoPager(libraryID: libraryID, assets: assets, current: $current, playingLive: playingLive,
+                   app: app)
         .ignoresSafeArea()
         .background(chrome ? Color(.systemBackground) : .black)
         .onTapGesture { withAnimation(.easeInOut(duration: 0.2)) { chrome.toggle() } }
@@ -136,27 +124,112 @@ struct ViewerView: View {
     }
 }
 
+/// Swiping between photos as in Photos: UIKit's page view controller, with a gap between
+/// photos and the system's paging feel. A zoomed-in photo pans first and hands over to paging
+/// at its edge (each page is a zooming UIScrollView).
+private struct PhotoPager: UIViewControllerRepresentable {
+    let libraryID: String
+    let assets: [Asset]
+    @Binding var current: String?
+    let playingLive: Bool
+    let app: AppModel
+
+    /// What every page reads, so changing it doesn't rebuild the pages.
+    @MainActor @Observable final class Shared {
+        var current: String?
+        var playingLive = false
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIViewController(context: Context) -> UIPageViewController {
+        let pager = UIPageViewController(transitionStyle: .scroll, navigationOrientation: .horizontal,
+                                         options: [.interPageSpacing: 20])   // the gap Photos shows
+        pager.dataSource = context.coordinator
+        pager.delegate = context.coordinator
+        pager.view.backgroundColor = .clear
+        context.coordinator.shared.current = current
+        if let i = assets.firstIndex(where: { $0.id == current }) {
+            pager.setViewControllers([context.coordinator.page(i)], direction: .forward, animated: false)
+        }
+        return pager
+    }
+
+    func updateUIViewController(_ pager: UIPageViewController, context: Context) {
+        let c = context.coordinator
+        c.parent = self
+        c.shared.playingLive = playingLive
+        // Moved from outside (not by swiping): show that page.
+        let shown = (pager.viewControllers?.first as? PageHost)?.index
+        if let i = assets.firstIndex(where: { $0.id == current }), i != shown {
+            c.shared.current = current
+            pager.setViewControllers([c.page(i)], direction: .forward, animated: false)
+        }
+    }
+
+    final class PageHost: UIHostingController<AnyView> {
+        var index = 0
+    }
+
+    final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
+        var parent: PhotoPager
+        let shared = Shared()
+
+        init(_ parent: PhotoPager) { self.parent = parent }
+
+        func page(_ index: Int) -> PageHost {
+            let p = parent
+            let host = PageHost(rootView: AnyView(
+                Page(libraryID: p.libraryID, asset: p.assets[index], shared: shared).environment(p.app)))
+            host.index = index
+            host.view.backgroundColor = .clear
+            return host
+        }
+
+        func pageViewController(_ pvc: UIPageViewController,
+                                viewControllerBefore vc: UIViewController) -> UIViewController? {
+            guard let i = (vc as? PageHost)?.index, i > 0 else { return nil }
+            return page(i - 1)
+        }
+
+        func pageViewController(_ pvc: UIPageViewController,
+                                viewControllerAfter vc: UIViewController) -> UIViewController? {
+            guard let i = (vc as? PageHost)?.index, i + 1 < parent.assets.count else { return nil }
+            return page(i + 1)
+        }
+
+        func pageViewController(_ pvc: UIPageViewController, didFinishAnimating finished: Bool,
+                                previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
+            guard completed, let i = (pvc.viewControllers?.first as? PageHost)?.index else { return }
+            let id = parent.assets[i].id
+            shared.current = id
+            parent.current = id
+        }
+    }
+}
+
 private struct Page: View {
     @Environment(AppModel.self) private var app
     let libraryID: String
     let asset: Asset
-    let isCurrent: Bool
-    let playingLive: Bool
+    let shared: PhotoPager.Shared
 
     var body: some View {
+        let isCurrent = shared.current == asset.id
         if let api = app.api {
             ZStack {
                 if asset.isVideo {
                     VideoPage(api: api, libraryID: libraryID, asset: asset, isCurrent: isCurrent)
                 } else {
                     ZoomablePhoto(api: api, libraryID: libraryID, asset: asset)
-                    if playingLive {
+                    if isCurrent && shared.playingLive {
                         LoopingPlayer(url: api.liveURL(libraryID, asset.u), cookie: api.cookie)
                             .aspectRatio(asset.aspect, contentMode: .fit)
                             .allowsHitTesting(false)
                     }
                 }
             }
+            .ignoresSafeArea()
         }
     }
 }
