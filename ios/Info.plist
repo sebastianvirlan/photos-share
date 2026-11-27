@@ -2,22 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- The Mac's private (Tailscale) link is plain http to a *.ts.net name. Tailscale
-	     encrypts the connection between devices itself. Everything else must be https. -->
+	<!-- The Mac's private (Tailscale) link is plain http, by name (*.ts.net) or by its 100.x
+	     address; iOS can't allow an address range, only everything. Tailscale encrypts the
+	     connection between devices itself; the public link is https anyway. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsLocalNetworking</key>
+		<key>NSAllowsArbitraryLoads</key>
 		<true/>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key>ts.net</key>
-			<dict>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-			</dict>
-		</dict>
 	</dict>
 </dict>
 </plist>
