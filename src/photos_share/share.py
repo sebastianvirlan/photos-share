@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import os
 import re
@@ -13,7 +12,6 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 TAILSCALE_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 # Without a terminal attached (as when the Mac app runs us), the binary inside Tailscale.app
 # tries to open the Tailscale app instead of acting as the command-line tool ("The Tailscale
@@ -66,12 +64,13 @@ class Share:
                 "macOS blocked access to this location. Grant Full Disk Access to the app "
                 "running photos-share (System Settings → Privacy & Security → Full Disk "
                 "Access), then restart it.") from e
-        self.auth = (Auth(cfg.password, secure_cookie=cfg.mode == "funnel")
+        # Both Tailscale modes are https (Tailscale's certificate), so the cookie is https-only.
+        self.auth = (Auth(cfg.password, secure_cookie=cfg.mode in ("tailscale", "funnel"))
                      if cfg.password else None)
         self.host, self.url = self._resolve_network()
         self._server = None
         self._thread: threading.Thread | None = None
-        self._funnel: subprocess.Popen | None = None
+        self._proxy: subprocess.Popen | None = None   # `tailscale serve` or `tailscale funnel`
         self._caffeinate: subprocess.Popen | None = None
         self._watch_stop: threading.Event | None = None
 
@@ -79,12 +78,9 @@ class Share:
 
     def _resolve_network(self) -> tuple[str, str]:
         cfg = self.cfg
-        if cfg.mode == "tailscale":
-            ip = _wait_for(tailscale_ip)
-            if not ip:
-                raise ShareError(tailscale_problem())
-            return ip, f"http://{tailscale_name() or ip}:{cfg.port}"
-        if cfg.mode == "funnel":
+        # Both Tailscale modes: the server listens on this Mac only; Tailscale puts https in
+        # front of it at https://<name>.ts.net, for the tailnet (serve) or everyone (funnel).
+        if cfg.mode in ("tailscale", "funnel"):
             if not tailscale_cli():
                 raise ShareError("Tailscale's command-line tool wasn't found. Install the "
                                  "Tailscale app from tailscale.com, or `brew install tailscale`.")
@@ -130,13 +126,18 @@ class Share:
             self._caffeinate.wait(timeout=5)
         self._caffeinate = None
 
-    def start_funnel(self, wait: float = FUNNEL_WAIT) -> None:
-        if self.cfg.mode != "funnel":
+    def start_proxy(self, wait: float = FUNNEL_WAIT) -> None:
+        """Tailscale's https front for the server: `tailscale serve` (private: only devices on
+        the tailnet) or `tailscale funnel` (public)."""
+        mode = self.cfg.mode
+        if mode not in ("tailscale", "funnel"):
             return
-        # Foreground mode: the public link exists only while this process runs. Tailscale's
-        # output is read, not discarded: when Funnel isn't enabled for this Mac yet, it prints
-        # a link to approve it and then waits, which would otherwise look like success.
-        proc = subprocess.Popen([tailscale_cli(), "funnel", str(self.cfg.port)], env=TAILSCALE_ENV,
+        command = "serve" if mode == "tailscale" else "funnel"
+        feature = "HTTPS" if mode == "tailscale" else "Funnel"
+        # Foreground mode: the link exists only while this process runs. Tailscale's output is
+        # read, not discarded: when the feature isn't enabled for this Mac yet, it prints a link
+        # to approve it and then waits, which would otherwise look like success.
+        proc = subprocess.Popen([tailscale_cli(), command, str(self.cfg.port)], env=TAILSCALE_ENV,
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True)
         lines: list[str] = []
@@ -147,31 +148,32 @@ class Share:
             text = "\n".join(lines)
             if "login.tailscale.com" in text or "not enabled" in text.lower():
                 break
-            if "available on the internet" in text.lower():
-                self._funnel = proc
+            # "Available on the internet:" (funnel) / "Available within your tailnet:" (serve)
+            if "available on the internet" in text.lower() or "available within your tailnet" in text.lower():
+                self._proxy = proc
                 return
             time.sleep(0.1)
         text = "\n".join(lines).strip()
         if proc.poll() is None and "login.tailscale.com" not in text and "not enabled" not in text.lower():
-            self._funnel = proc   # running and not asking for anything: assume it's serving
+            self._proxy = proc   # running and not asking for anything: assume it's serving
             return
         if proc.poll() is None:
             proc.terminate()
         link = re.search(r"https://login\.tailscale\.com\S*", text)
         if link:
-            raise ShareError("Tailscale Funnel isn’t enabled for this Mac yet. Open this link once, "
+            raise ShareError(f"Tailscale {feature} isn’t enabled for this Mac yet. Open this link once, "
                              f"approve it, then start sharing again:\n{link.group(0)}")
-        raise ShareError("Tailscale Funnel didn’t start:\n" + text +
-                         "\nIf it mentions enabling Funnel, open that link once, then retry.")
+        raise ShareError(f"Tailscale {feature} didn’t start:\n" + text +
+                         f"\nIf it mentions enabling {feature}, open that link once, then retry.")
 
-    def stop_funnel(self) -> None:
-        if self._funnel and self._funnel.poll() is None:
-            self._funnel.terminate()
+    def stop_proxy(self) -> None:
+        if self._proxy and self._proxy.poll() is None:
+            self._proxy.terminate()
             try:
-                self._funnel.wait(timeout=5)
+                self._proxy.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                self._funnel.kill()
-        self._funnel = None
+                self._proxy.kill()
+        self._proxy = None
 
     def start_background(self) -> None:
         """Run the server on a thread (for the menu bar app)."""
@@ -186,7 +188,7 @@ class Share:
             raise ShareError(f"Couldn't start the web server on port {self.cfg.port}. "
                              "Is another copy already running?")
         try:
-            self.start_funnel()
+            self.start_proxy()
         except ShareError:
             self.stop()
             raise
@@ -202,7 +204,7 @@ class Share:
     def stop(self) -> None:
         self.stop_watching()
         self.stop_keep_awake()
-        self.stop_funnel()
+        self.stop_proxy()
         if self._server:
             self._server.should_exit = True
         if self._thread:
@@ -287,14 +289,6 @@ def tailscale_problem() -> str:
                 "in the Tailscale admin console (DNS page)." + _tool_errors())
     return (f"Tailscale didn't connect within {TAILSCALE_WAIT:.0f} seconds "
             f"(it says “{state}”). Try again once it shows as connected.")
-
-
-def tailscale_ip() -> str | None:
-    out = subprocess.run(["ifconfig"], capture_output=True, text=True).stdout
-    for ip in re.findall(r"inet (\d+\.\d+\.\d+\.\d+)", out):
-        if ipaddress.ip_address(ip) in TAILSCALE_NET:
-            return ip
-    return None
 
 
 def tailscale_name() -> str | None:

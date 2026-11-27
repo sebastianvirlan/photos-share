@@ -134,15 +134,17 @@ struct API: Sendable {
         return URLSession(configuration: c)
     }()
 
-    /// Turns what the user typed ("name.ts.net:8080", a pasted link…) into the server's base URL.
+    /// Turns what the user typed ("name.tailnet.ts.net", a pasted link…) into the server's base URL.
     static func normalise(_ typed: String) -> URL? {
         var s = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !s.isEmpty else { return nil }
-        // Without a scheme: a port means the private (Tailscale) link, which is plain http;
-        // the public link has no port and is https.
+        // Without a scheme: https, as both Tailscale links are; plain http only for a share on
+        // this device or the local network (e.g. the simulator's own Mac).
         if !s.contains("://") {
-            let hostPart = s.split(separator: "/").first.map(String.init) ?? s
-            s = (hostPart.contains(":") ? "http://" : "https://") + s
+            let host = (s.split(separator: "/").first.map(String.init) ?? s)
+                .split(separator: ":").first.map(String.init)?.lowercased() ?? ""
+            let local = host == "localhost" || host.hasPrefix("127.") || host.hasSuffix(".local")
+            s = (local ? "http://" : "https://") + s
         }
         guard var c = URLComponents(string: s), let host = c.host, !host.isEmpty,
               c.scheme == "http" || c.scheme == "https" else { return nil }

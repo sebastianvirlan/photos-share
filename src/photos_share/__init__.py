@@ -36,7 +36,8 @@ def main() -> None:
                         help=f"require a password (asked for at start, or read from ${PASSWORD_ENV})")
     net = parser.add_mutually_exclusive_group()
     net.add_argument("--tailscale", action="store_true",
-                     help="listen on this Mac's Tailscale address only (viewers need Tailscale)")
+                     help="private https link for devices on your Tailscale network only "
+                          "(viewers need Tailscale; uses tailscale serve)")
     net.add_argument("--funnel", action="store_true",
                      help="publish a public https link with Tailscale Funnel (no app needed for "
                           "viewers; requires a password)")
@@ -108,7 +109,7 @@ def main() -> None:
         say("Warning: listening beyond this Mac" + ("" if password else " with no password") + ".")
 
     try:
-        share.start_funnel()
+        share.start_proxy()
     except ShareError as e:
         fail(str(e))
     share.start_keep_awake()
@@ -117,6 +118,8 @@ def main() -> None:
     if mode == "funnel":
         say("The first time, a public link can take a few minutes to work (Tailscale sets up its\n"
             "address and certificate). Test it from a phone on mobile data, not from this Mac.")
+    elif mode == "tailscale":
+        say("The first time, the link can take a minute to work while Tailscale gets its certificate.")
     server = share.server()
     if args.machine:
         # Announce "ready" only once the port is actually open.
@@ -142,12 +145,12 @@ def main() -> None:
         if not server.started:
             share.stop_watching()
             share.stop_keep_awake()
-            share.stop_funnel()
+            share.stop_proxy()
             fail(f"couldn't start the web server on port {args.port}. Is another copy running?")
     finally:
         share.stop_watching()
         share.stop_keep_awake()
         if mode == "funnel":
-            share.stop_funnel()
+            share.stop_proxy()
             say("Public link closed.")
         emit("stopped")

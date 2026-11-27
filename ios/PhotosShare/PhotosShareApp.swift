@@ -128,7 +128,7 @@ struct ConnectView: View {
                 return "The Mac didn’t answer. Is it sharing, and awake?"
             case .notConnectedToInternet: return "This iPhone is offline."
             case .appTransportSecurityRequiresSecureConnection:
-                return "This address needs https://, or a Tailscale (ts.net) name."
+                return "This address needs https://. Use the link shown on the Mac under Sharing."
             default: return e.localizedDescription
             }
         }
